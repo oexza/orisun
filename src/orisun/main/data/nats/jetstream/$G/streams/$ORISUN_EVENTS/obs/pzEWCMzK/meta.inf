@@ -1,1 +1,0 @@
-{"Created":"2024-09-21T21:49:59.534685Z","Name":"pzEWCMzK","name":"pzEWCMzK","deliver_policy":"by_start_time","opt_start_time":"2024-09-04T18:58:08.092034001Z","ack_policy":"explicit","ack_wait":30000000000,"max_deliver":-1,"filter_subject":"EVENTS","replay_policy":"instant","max_ack_pending":65536,"deliver_subject":"_INBOX.bzzTgPSuaLS3uZ9dZg4UJ9","num_replicas":0}
