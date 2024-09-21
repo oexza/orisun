@@ -1,4 +1,4 @@
-# Orisun Event Store
+# Orisun (A batteries included Event store.)
 
 ## Description
 Orisun Event Store is a robust event sourcing solution built on PostgreSQL. It allows you to store and retrieve events efficiently, making it ideal for applications that require event-driven architecture.
