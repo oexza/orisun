@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package eventstore;
+
+option go_package = "orisun/eventstore";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+message Position {
+  int64 commit_position = 1;
+  int64 prepare_position = 2;
+}
+
+message Tag {
+  string key = 1;
+  string value = 2;
+}
+
+message Criterion {
+  repeated Tag tags = 1;
+}
+
+message Criteria {
+  repeated Criterion criteria = 1;
+}
+
+message ConsistencyCondition {
+  Position consistency_marker = 1;
+  Criteria criteria = 2;
+}
+
+message EventToSave {
+  string event_id = 1;
+  string event_type = 2;
+  string data = 3;
+  string metadata = 4;
+  repeated Tag tags = 5;
+}
+
+message Event {
+  string event_id = 1;
+  string event_type = 2;
+  string data = 3;
+  string metadata = 4;
+  repeated Tag tags = 5;
+  Position position = 6;
+  google.protobuf.Timestamp date_created = 10;
+}
+
+message WriteResult {
+  Position log_position = 1;
+}
+
+enum Direction {
+  ASC = 0;
+  DESC = 1;
+}
+
+message SaveEventsRequest {
+  ConsistencyCondition consistency_condition = 1;
+  repeated EventToSave events = 2;
+}
+
+message GetEventsRequest {
+  Criteria criteria = 1;
+  Position last_retrieved_position = 2;
+  int32 count = 3;
+  Direction direction = 4;
+}
+
+message GetEventsResponse {
+  repeated Event events = 1;
+}
+
+message SubscribeToEventStoreRequest {
+  Position position = 1;
+  Criteria criteria = 2;
+}
+
+message PublishRequest {
+  string id = 1;
+  string subject = 2;
+  bytes data = 3;
+}
+
+message SubscribeRequest {
+  string subject = 1;
+  string consumer_name = 2;
+}
+
+message SubscribeResponse {
+  Message message = 1;
+}
+
+message Message {
+  string id = 1;
+  string subject = 2;
+  bytes data = 3;
+}
+
+message AckRequest {
+  string ack_id = 1;
+}
+
+service EventStore {
+  rpc SaveEvents(SaveEventsRequest) returns (WriteResult) {}
+  rpc GetEvents(GetEventsRequest) returns (GetEventsResponse) {}
+  rpc SubscribeToEvents(SubscribeToEventStoreRequest) returns (stream Event) {}
+  rpc PublishToPubSub(PublishRequest) returns (google.protobuf.Empty) {}
+  rpc SubscribeToPubSub(SubscribeRequest) returns (stream SubscribeResponse) {}
+}

@@ -1,0 +1,27 @@
+# IntelliJ
+.idea/
+*.iws
+*.iml
+**/*.iml
+*.ipr
+
+
+.vscode/
+*.code-workspace
+*.sublime-workspace
+*.sublime-project
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+src/orisun/data/
+
+#Eclipse
+.springBeans
+.classpath
+.settings/
+.loadpath
+.project
+

@@ -1,0 +1,27 @@
+db:
+  user: ${ORISUN_DB_USER:postgres}
+  name: ${ORISUN_DB_NAME:orisun}
+  password: ${ORISUN_DB_PASSWORD:password@1}
+  host: ${ORISUN_DB_HOST:localhost}
+  port: ${ORISUN_DB_PORT:5432}
+grpc:
+  port: ${ORISUN_GRPC_PORT:5005}
+  enableReflection: ${ORISUN_GRPC_ENABLE_REFLECTION:true}
+nats:
+  port: ${ORISUN_NATS_PORT:4222}
+  maxPayload: ${ORISUN_NATS_MAX_PAYLOAD:1048576}
+  storeDir: ${ORISUN_NATS_STORE_DIR:./data/nats}
+  cluster:
+    name: ${ORISUN_NATS_CLUSTER_NAME:nats-cluster}
+    host: ${ORISUN_NATS_CLUSTER_HOST:localhost}
+    port: ${ORISUN_NATS_CLUSTER_PORT:6222}
+    username: ${ORISUN_NATS_CLUSTER_USERNAME:nats}
+    password: ${ORISUN_NATS_CLUSTER_PASSWORD:password@1}
+    enabled: ${ORISUN_NATS_CLUSTER_ENABLED:false}
+    timeout: ${ORISUN_NATS_CLUSTER_TIMEOUT:60s}
+    routes:
+      - nats://localhost:6222
+pollingPublisher:
+  batchSize: ${ORISUN_POLLING_PUBLISHER_BATCH_SIZE:1000}
+logging:
+  level: INFO
