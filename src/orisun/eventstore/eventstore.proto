@@ -76,6 +76,7 @@ message GetEventsResponse {
 message SubscribeToEventStoreRequest {
   Position position = 1;
   Criteria criteria = 2;
+  string subscriber_name = 3;
 }
 
 message PublishRequest {

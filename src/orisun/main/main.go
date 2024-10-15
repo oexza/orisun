@@ -16,13 +16,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	logger "log"
-	pb "orisun/eventstore"
+	pb "orisun/src/orisun/eventstore"
 	"runtime/debug"
 
 	"github.com/nats-io/nats-server/v2/server"
-	c "orisun/config"
-	l "orisun/logging"
-	dbase "orisun/db"
+	c "orisun/src/orisun/config"
+	l "orisun/src/orisun/logging"
+	dbase "orisun/src/orisun/db"
 )
 
 var AppLogger l.Logger
@@ -37,7 +37,7 @@ func main() {
 	}
 
 	// Initialize logger
-	logr, err := l.ZapLogger(config.Logging.Level, false)
+	logr, err := l.ZapLogger(config.Logging.Level, config.Prod)
 	if err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		os.Exit(1)
@@ -107,7 +107,10 @@ func main() {
 	// Create EventStore server and start polling events from Postgres to NATS
 	eventStore := pb.NewPostgresEventStoreServer(db, js)
 
-	go pb.PollEventsFromPgToNats(db, js, eventStore, config.PollingPublisher.BatchSize)
+	// Create a context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go pb.PollEventsFromPgToNats(ctx, db, js, eventStore, config.PollingPublisher.BatchSize)
 
 	// Set up gRPC server with error handling
 	grpcServer := grpc.NewServer(
@@ -136,7 +139,7 @@ func main() {
 func streamErrorInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	err := handler(srv, ss)
 	if err != nil {
-		AppLogger.Error("Error in streaming RPC %s: %v", info.FullMethod, err)
+		AppLogger.Errorf("Error in streaming RPC %s: %v", info.FullMethod, err)
 		return status.Errorf(codes.Internal, "Internal server error")
 	}
 	return nil
@@ -145,7 +148,7 @@ func streamErrorInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.St
 func recoveryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			AppLogger.Error("Panic in %s: %v\nStack Trace:\n%s", info.FullMethod, r, debug.Stack())
+			AppLogger.Errorf("Panic in %s: %v\nStack Trace:\n%s", info.FullMethod, r, debug.Stack())
 			err = status.Errorf(codes.Internal, "Internal server error")
 		}
 	}()
@@ -157,7 +160,7 @@ func convertToURLSlice(routes []string) []*url.URL {
 	for _, route := range routes {
 		u, err := url.Parse(route)
 		if err != nil {
-			AppLogger.Error("Warning: invalid route URL %q: %v", route, err)
+			AppLogger.Errorf("Warning: invalid route URL %q: %v", route, err)
 			continue
 		}
 		urls = append(urls, u)

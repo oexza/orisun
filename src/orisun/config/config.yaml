@@ -12,7 +12,7 @@ nats:
   maxPayload: ${ORISUN_NATS_MAX_PAYLOAD:1048576}
   storeDir: ${ORISUN_NATS_STORE_DIR:./data/nats}
   cluster:
-    name: ${ORISUN_NATS_CLUSTER_NAME:nats-cluster}
+    name: ${ORISUN_NATS_CLUSTER_NAME:orisun-nats-cluster}
     host: ${ORISUN_NATS_CLUSTER_HOST:localhost}
     port: ${ORISUN_NATS_CLUSTER_PORT:6222}
     username: ${ORISUN_NATS_CLUSTER_USERNAME:nats}
@@ -25,3 +25,5 @@ pollingPublisher:
   batchSize: ${ORISUN_POLLING_PUBLISHER_BATCH_SIZE:1000}
 logging:
   level: INFO
+prod:
+  ${ORISUN_IS_PROD:true}

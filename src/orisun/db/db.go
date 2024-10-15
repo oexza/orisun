@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	_ "github.com/lib/pq"
-	config "orisun/config"
+	config "orisun/src/orisun/config"
 )
 
 func getDb(config *config.AppConfig) (*sql.DB, error) {

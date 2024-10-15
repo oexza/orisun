@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
 	"os"
 	"strings"
@@ -36,6 +38,7 @@ type AppConfig struct {
 		StoreDir       string
 		Cluster        NatsClusterConfig
 	}
+	Prod bool
 }
 
 type NatsClusterConfig struct {
@@ -49,13 +52,15 @@ type NatsClusterConfig struct {
 	Timeout  time.Duration
 }
 
-func LoadConfig() (*AppConfig, error) {
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath("../config")
+//go:embed config.yaml
+var configData []byte
 
-	if err := viper.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+func LoadConfig() (*AppConfig, error) {
+	viper.SetConfigType("yaml") // Set the type of the config file
+
+	// Read from the embedded config data
+	if err := viper.ReadConfig(bytes.NewReader(configData)); err != nil {
+		return nil, fmt.Errorf("failed to read config data: %w", err)
 	}
 
 	// Custom environment variable substitution

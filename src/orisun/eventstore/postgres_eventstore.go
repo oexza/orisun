@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/nats-io/nats.go"
-	logging "orisun/logging"
+	logging "orisun/src/orisun/logging"
 )
 
 type PostgresEventStoreServer struct {
@@ -28,11 +28,12 @@ type PostgresEventStoreServer struct {
 }
 
 const (
-	advisoryLockID    = 12345
-	eventsStreamName  = "$ORISUN_EVENTS"
-	eventsSubjectName = "EVENTS"
-	pubsubPrefix      = "orisun_pubsub."
-	pubsubStreamName  = "ORISUN_PUB_SUB"
+	advisoryLockID              = 12345
+	eventsStreamName            = "$ORISUN_EVENTS"
+	eventsSubjectName           = "EVENTS"
+	pubsubPrefix                = "orisun_pubsub."
+	pubsubStreamName            = "ORISUN_PUB_SUB"
+	activeSubscriptionsKVBucket = "ACTIVE_SUBSCRIPTIONS"
 )
 
 var logger logging.Logger
@@ -308,6 +309,29 @@ func (s *PostgresEventStoreServer) SubscribeToEvents(req *SubscribeToEventStoreR
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel() // Ensure all resources are cleaned up when we exit
 
+	// Create or access the KV store for active subscriptions
+	kv, err := s.js.CreateKeyValue(&nats.KeyValueConfig{
+		Bucket:      activeSubscriptionsKVBucket,
+		Description: "Active subscriptions",
+		Storage:     nats.MemoryStorage,
+	})
+
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to access KV store: %v", err)
+	}
+
+	// Try to create a new entry for this subscription
+	_, err = kv.Create(req.SubscriberName, []byte(time.Now().String()))
+	if err != nil {
+		if strings.Contains(err.Error(), "key exists") {
+			return status.Errorf(codes.AlreadyExists, "subscription already exists for subject: %s", req.SubscriberName)
+		}
+		return status.Errorf(codes.Internal, "failed to create subscription entry: %v", err)
+	}
+
+	// Ensure we remove the KV entry when we're done
+	defer kv.Delete(req.SubscriberName)
+
 	// Set up initial position
 	lastPosition := req.Position
 	if lastPosition == nil {
@@ -442,6 +466,9 @@ func (s *PostgresEventStoreServer) sendHistoricalEvents(ctx context.Context, fro
 }
 
 func (s *PostgresEventStoreServer) eventMatchesCriteria(event *Event, criteria *Criteria) bool {
+	if len(criteria.Criteria) == 0 {
+		return true
+	}
 	for i := 0; i < len(criteria.Criteria); i++ {
 		// Check if both tags are not nil and match
 		if criteria.Criteria[i].Tags != nil && event.Tags != nil && reflect.DeepEqual(criteria.Criteria[i].Tags, event.Tags) {
@@ -483,7 +510,7 @@ func (s *PostgresEventStoreServer) SubscribeToPubSub(req *SubscribeRequest, stre
 			}
 		},
 		nats.Durable(req.ConsumerName),
-		nats.ManualAck(),
+		nats.AckExplicit(),
 		nats.DeliverAll(),
 		nats.BindStream(pubsubStreamName),
 	)
@@ -497,34 +524,38 @@ func (s *PostgresEventStoreServer) SubscribeToPubSub(req *SubscribeRequest, stre
 	return stream.Context().Err()
 }
 
-func PollEventsFromPgToNats(db *sql.DB, js nats.JetStreamContext, eventStore *PostgresEventStoreServer, batchSize int32) {
+func PollEventsFromPgToNats(ctx context.Context, db *sql.DB, js nats.JetStreamContext, eventStore *PostgresEventStoreServer, batchSize int32) {
 	for {
-		// Attempt to acquire the advisory lock
-		var gotLock bool
-		dberr := db.QueryRow("SELECT pg_try_advisory_lock($1)", advisoryLockID).Scan(&gotLock)
-		if dberr != nil {
-			logger.Errorf("failed to acquire advisory lock: %v", dberr)
-			time.Sleep(1 * time.Second) // Retry interval
-			continue
-		}
-		logger.Debugf("lock acquired: %v", gotLock)
+		select {
+		case <-ctx.Done():
+			logger.Infof("Polling stopped: %v", ctx.Err())
+			return
+		default:
+			var gotLock bool
+			dberr := db.QueryRow("SELECT pg_try_advisory_lock($1)", advisoryLockID).Scan(&gotLock)
+			if dberr != nil {
+				logger.Errorf("failed to acquire advisory lock: %v", dberr)
+				time.Sleep(1 * time.Second) // Retry interval
+				continue
+			}
+			if !gotLock {
+				time.Sleep(1 * time.Second) // Retry interval if lock not acquired
+				continue
+			}
+			defer db.Exec("SELECT pg_advisory_unlock($1)", advisoryLockID) // Ensure lock is released
 
-		if gotLock {
-			// Get the last published position
 			lastPosition, err := getLastPublishedPosition(js)
 			if err != nil {
 				logger.Errorf("failed to get last published position: %v", err)
 				time.Sleep(2 * time.Second) // Retry interval
 				continue
 			}
-			logger.Debugf("last published position: %v", lastPosition)
-			// Call GetEvents to poll for new events
+
 			req := &GetEventsRequest{
 				LastRetrievedPosition: lastPosition,
 				Count:                 batchSize,
 				Direction:             Direction_ASC,
 			}
-			logger.Debugf("request: %v", req)
 			resp, err := eventStore.GetEvents(context.Background(), req)
 			if err != nil {
 				logger.Errorf("failed to get events: %v", err)
@@ -533,19 +564,12 @@ func PollEventsFromPgToNats(db *sql.DB, js nats.JetStreamContext, eventStore *Po
 			}
 
 			for _, event := range resp.Events {
-				// Publish event to NATS with retry
 				eventData, err := json.Marshal(event)
 				if err != nil {
 					logger.Errorf("failed to marshal event: %v", err)
 					continue
 				}
-
 				publishEventWithRetry(js, eventData)
-			}
-
-			// Release the advisory lock
-			if _, err := db.Exec("SELECT pg_advisory_unlock($1)", advisoryLockID); err != nil {
-				logger.Errorf("failed to release advisory lock: %v", err)
 			}
 		}
 		time.Sleep(1 * time.Second) // Polling interval

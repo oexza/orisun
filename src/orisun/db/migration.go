@@ -2,31 +2,34 @@ package db
 
 import (
 	"database/sql"
+	"embed"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
-func RunDbScripts(db *sql.DB) error {
-	scriptsDir := "../db_scripts"
-	files, err := os.ReadDir(scriptsDir)
-	if err != nil {
-		return fmt.Errorf("failed to read db_scripts directory: %w", err)
-	}
+//go:embed migrations/*.sql
+var sqlScripts embed.FS
 
+func RunDbScripts(db *sql.DB) error {
 	var combinedScript strings.Builder
 
+	// Read all SQL files from the embedded filesystem
+	files, err := sqlScripts.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("failed to read migrations directory: %w", err)
+	}
+
 	for _, file := range files {
-		if filepath.Ext(file.Name()) == ".sql" {
-			scriptPath := filepath.Join(scriptsDir, file.Name())
-			content, err := os.ReadFile(scriptPath)
-			if err != nil {
-				return fmt.Errorf("failed to read script %s: %w", file.Name(), err)
-			}
-			combinedScript.WriteString(string(content))
-			combinedScript.WriteString("\n")
+		if file.IsDir() {
+			continue // Skip directories
 		}
+
+		content, err := sqlScripts.ReadFile("migrations/" + file.Name())
+		if err != nil {
+			return fmt.Errorf("failed to read script %s: %w", file.Name(), err)
+		}
+		combinedScript.WriteString(string(content))
+		combinedScript.WriteString("\n")
 	}
 
 	tx, err := db.Begin()

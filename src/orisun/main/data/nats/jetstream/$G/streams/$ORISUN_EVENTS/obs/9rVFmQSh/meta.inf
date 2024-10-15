@@ -1,0 +1,1 @@
+{"Created":"2024-10-15T23:44:20.747276Z","Name":"9rVFmQSh","name":"9rVFmQSh","deliver_policy":"by_start_time","opt_start_time":"2024-09-04T18:58:08.092034001Z","ack_policy":"explicit","ack_wait":30000000000,"max_deliver":-1,"filter_subject":"EVENTS","replay_policy":"instant","max_ack_pending":65536,"deliver_subject":"_INBOX.HhXFNKf347okPfWWVjz0Co","num_replicas":0}
