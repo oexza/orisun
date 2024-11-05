@@ -531,27 +531,60 @@ func PollEventsFromPgToNats(ctx context.Context, db *sql.DB, js nats.JetStreamCo
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Infof("Polling stopped: %v", ctx.Err())
+			logger.Info("Context cancelled, stopping polling")
 			return
 		default:
+			if err := runPolling(ctx, db, js, eventStore, batchSize); err != nil {
+				logger.Errorf("Polling failed: %v, will retry", err)
+				time.Sleep(5 * time.Second) // Add backoff before retry
+			}
+		}
+	}
+}
+
+func runPolling(ctx context.Context, db *sql.DB, js nats.JetStreamContext, eventStore *PostgresEventStoreServer, batchSize int32) error {
+	// Get a dedicated connection
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %v", err)
+	}
+	defer conn.Close()
+
+	// Try to acquire the lock with retries
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 			var gotLock bool
-			dberr := db.QueryRow("SELECT pg_try_advisory_lock($1)", advisoryLockID).Scan(&gotLock)
-			if dberr != nil {
-				logger.Errorf("failed to acquire advisory lock: %v", dberr)
-				time.Sleep(1 * time.Second) // Retry interval
+			err = conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", advisoryLockID).Scan(&gotLock)
+			if err != nil {
+				logger.Errorf("Failed to acquire lock: %v, will retry", err)
+				time.Sleep(5 * time.Second)
 				continue
 			}
 			if !gotLock {
-				time.Sleep(1 * time.Second) // Retry interval if lock not acquired
+				logger.Info("Lock is held by another instance, will retry")
+				time.Sleep(5 * time.Second)
 				continue
 			}
-			defer db.Exec("SELECT pg_advisory_unlock($1)", advisoryLockID) // Ensure lock is released
+			
+			logger.Info("Successfully acquired polling lock")
+			goto acquired
+		}
+	}
+	acquired:
 
+	// Start polling loop
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("Context cancelled, stopping polling")
+			return ctx.Err()
+		default:
 			lastPosition, err := getLastPublishedPosition(js)
 			if err != nil {
-				logger.Errorf("failed to get last published position: %v", err)
-				time.Sleep(2 * time.Second) // Retry interval
-				continue
+				return fmt.Errorf("failed to get last published position: %v", err)
 			}
 
 			req := &GetEventsRequest{
@@ -559,17 +592,15 @@ func PollEventsFromPgToNats(ctx context.Context, db *sql.DB, js nats.JetStreamCo
 				Count:                 batchSize,
 				Direction:             Direction_ASC,
 			}
-			resp, err := eventStore.GetEvents(context.Background(), req)
+			resp, err := eventStore.GetEvents(ctx, req)
 			if err != nil {
-				logger.Errorf("failed to get events: %v", err)
-				time.Sleep(1 * time.Second) // Retry interval
-				continue
+				return fmt.Errorf("failed to get events: %v", err)
 			}
 
 			for _, event := range resp.Events {
 				eventData, err := json.Marshal(event)
 				if err != nil {
-					logger.Errorf("failed to marshal event: %v", err)
+					logger.Errorf("Failed to marshal event: %v", err)
 					continue
 				}
 				publishEventWithRetry(js, eventData)
