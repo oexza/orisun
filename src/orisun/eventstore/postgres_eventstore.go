@@ -51,6 +51,7 @@ func NewPostgresEventStoreServer(db *sql.DB, js nats.JetStreamContext) *Postgres
 		Subjects: []string{
 			eventsSubjectName,
 		},
+		MaxAge: 24 * time.Hour,
 	})
 	if err != nil {
 		log.Fatalf("failed to add stream: %v", err)
@@ -62,6 +63,7 @@ func NewPostgresEventStoreServer(db *sql.DB, js nats.JetStreamContext) *Postgres
 		Subjects:     []string{pubsubPrefix + ">"},
 		Storage:      nats.FileStorage,
 		MaxConsumers: -1, // Allow unlimited consumers
+		MaxAge:       24 * time.Hour,
 	})
 	if err != nil {
 		log.Fatalf("failed to add stream: %v", err)
@@ -493,6 +495,7 @@ func (s *PostgresEventStoreServer) SubscribeToPubSub(req *SubscribeRequest, stre
 						Data:    msg.Data,
 					},
 				})
+
 				if err == nil {
 					// Message sent successfully, break the retry loop
 					msg.Ack()
