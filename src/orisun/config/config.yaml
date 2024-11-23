@@ -4,6 +4,7 @@ db:
   password: ${ORISUN_DB_PASSWORD:password@1}
   host: ${ORISUN_DB_HOST:localhost}
   port: ${ORISUN_DB_PORT:5432}
+  schemas: ${ORISUN_DB_SCHEMAS:public,test}
 grpc:
   port: ${ORISUN_GRPC_PORT:5005}
   enableReflection: ${ORISUN_GRPC_ENABLE_REFLECTION:true}
@@ -19,11 +20,9 @@ nats:
     password: ${ORISUN_NATS_CLUSTER_PASSWORD:password@1}
     enabled: ${ORISUN_NATS_CLUSTER_ENABLED:false}
     timeout: ${ORISUN_NATS_CLUSTER_TIMEOUT:60s}
-    routes:
-      - nats://localhost:6222
+    routes: nats://localhost:6222
 pollingPublisher:
   batchSize: ${ORISUN_POLLING_PUBLISHER_BATCH_SIZE:1000}
 logging:
-  level: INFO
-prod:
-  ${ORISUN_IS_PROD:true}
+  level: ${ORISUN_LOGGING_LEVEL:DEBUG}
+prod: ${ORISUN_IS_PROD:true}

@@ -59,7 +59,8 @@ enum Direction {
 
 message SaveEventsRequest {
   ConsistencyCondition consistency_condition = 1;
-  repeated EventToSave events = 2;
+  string boundary = 2;
+  repeated EventToSave events = 3;
 }
 
 message GetEventsRequest {
@@ -67,6 +68,7 @@ message GetEventsRequest {
   Position last_retrieved_position = 2;
   int32 count = 3;
   Direction direction = 4;
+  string boundary = 5;
 }
 
 message GetEventsResponse {
@@ -77,6 +79,7 @@ message SubscribeToEventStoreRequest {
   Position position = 1;
   Criteria criteria = 2;
   string subscriber_name = 3;
+  string boundary = 4;
 }
 
 message PublishRequest {

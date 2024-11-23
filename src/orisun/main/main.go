@@ -21,8 +21,9 @@ import (
 
 	"github.com/nats-io/nats-server/v2/server"
 	c "orisun/src/orisun/config"
-	l "orisun/src/orisun/logging"
 	dbase "orisun/src/orisun/db"
+	l "orisun/src/orisun/logging"
+	postgres "orisun/src/orisun/postgres"
 )
 
 var AppLogger l.Logger
@@ -46,15 +47,22 @@ func main() {
 
 	// Connect to PostgreSQL
 	db, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		config.DB.Host, config.DB.Port, config.DB.User, config.DB.Password, config.DB.Name))
+		config.DB.Host, config.DB.Port, config.DB.User, config.DB.Password, config.DB.Name,
+	))
 	if err != nil {
 		AppLogger.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
 
+	// Create a context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+
 	// Run database migrations
-	if err := dbase.RunDbScripts(db); err != nil {
-		AppLogger.Fatalf("Failed to run database migrations: %v", err)
+	for _, schema := range config.DB.GetSchemas() {
+		if err := dbase.RunDbScripts(db, schema, ctx); err != nil {
+			AppLogger.Fatalf("Failed to run database migrations for schema %s: %v", schema, err)
+		}
+		AppLogger.Info("Database migrations for schema %s completed successfully", schema)
 	}
 
 	natsOptions := &server.Options{
@@ -73,12 +81,15 @@ func main() {
 			Host: config.Nats.Cluster.Host,
 			Port: config.Nats.Cluster.Port,
 		}
-		natsOptions.Routes = convertToURLSlice(config.Nats.Cluster.Routes)
+		natsOptions.Routes = convertToURLSlice(config.Nats.Cluster.GetRoutes())
+
+		AppLogger.Info("Nats cluster is enabled, running in clustered mode")
 		AppLogger.Info("Cluster configuration: Name=%v, Host=%v, Port=%v, Routes=%v",
 			config.Nats.Cluster.Name, config.Nats.Cluster.Host, config.Nats.Cluster.Port, config.Nats.Cluster.Routes)
 	} else {
-		AppLogger.Info("No cluster configuration provided, running in standalone mode")
+		AppLogger.Info("Nats cluster is disabled, running in standalone mode")
 	}
+
 	// Start embedded NATS server with clustering
 	natsServer, err := server.NewServer(natsOptions)
 	if err != nil {
@@ -105,12 +116,24 @@ func main() {
 	}
 
 	// Create EventStore server and start polling events from Postgres to NATS
-	eventStore := pb.NewPostgresEventStoreServer(db, js)
+	eventStore := pb.NewPostgresEventStoreServer(
+		js,
+		postgres.NewPostgresSaveEvents(db, AppLogger),
+		postgres.NewPostgresGetEvents(db, AppLogger),
+		config.DB.GetSchemas(),
+	)
 
-	// Create a context for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pb.PollEventsFromPgToNats(ctx, db, js, eventStore, config.PollingPublisher.BatchSize)
+
+	for _, schema := range config.DB.GetSchemas() {
+		// Get last published position
+		lastPosition, err := pb.GetLastPublishedPosition(js, schema)
+		if err != nil {
+			AppLogger.Fatalf("Failed to get last published position: %v", err)
+		}
+		go postgres.PollEventsFromPgToNats(ctx, db, js, eventStore, config.PollingPublisher.BatchSize,
+			lastPosition, pb.EventsSubjectName, AppLogger, schema)
+	}
 
 	// Set up gRPC server with error handling
 	grpcServer := grpc.NewServer(

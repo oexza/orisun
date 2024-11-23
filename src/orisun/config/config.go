@@ -13,13 +13,7 @@ import (
 
 // AppConfig represents the application configuration
 type AppConfig struct {
-	DB struct {
-		User     string
-		Name     string
-		Password string
-		Host     string
-		Port     string
-	}
+	DB   DBConfig
 	Grpc struct {
 		Port             string
 		EnableReflection bool
@@ -41,15 +35,32 @@ type AppConfig struct {
 	Prod bool
 }
 
+type DBConfig struct {
+	User     string
+	Name     string
+	Password string
+	Host     string
+	Port     string
+	Schemas  string
+}
+
+func (c *DBConfig) GetSchemas() []string {
+	return strings.Split(c.Schemas, ",")
+}
+
 type NatsClusterConfig struct {
 	Name     string
 	Host     string
 	Port     int
-	Routes   []string
+	Routes   string
 	Username string
 	Password string
 	Enabled  bool
 	Timeout  time.Duration
+}
+
+func (c *NatsClusterConfig) GetRoutes() []string {
+	return strings.Split(c.Routes, ",")
 }
 
 //go:embed config.yaml

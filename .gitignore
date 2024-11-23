@@ -4,7 +4,10 @@
 *.iml
 **/*.iml
 *.ipr
-
+*.blk
+*.blk.gz
+*.inf
+*.sum
 
 .vscode/
 *.code-workspace

@@ -20,6 +20,7 @@ You can interact with the event store through the gRPC endpoints defined in the 
 - **SubscribeToPubSub**: Subscribe to messages from a Pub/Sub topic.
 
 ### Example gRPC Client Usage
+
 Here’s a simple example of how to use the gRPC client to save events:
 
 {

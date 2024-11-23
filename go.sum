@@ -1,3 +1,5 @@
+github.com/apple/foundationdb/bindings/go v0.0.0-20241122075719-ad091c173497 h1:yNUhxZd8onG3fxgq08AZoUlluCk9U6I4iOnZTLDk13g=
+github.com/apple/foundationdb/bindings/go v0.0.0-20241122075719-ad091c173497/go.mod h1:OMVSB21p9+xQUIqlGizHPZfjK+SHws1ht+ZytVDoz9U=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
