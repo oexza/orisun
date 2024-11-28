@@ -15,12 +15,12 @@ import (
 
 	"strings"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	logging "orisun/src/orisun/logging"
 )
 
 type SaveEvents interface {
-	Save(ctx context.Context, events *[]EventWithMapTags, 
+	Save(ctx context.Context, events *[]EventWithMapTags,
 		consistencyCondition *ConsistencyCondition, boundary string) (transactionID string, globalID int64, err error)
 }
 
@@ -30,22 +30,31 @@ type GetEvents interface {
 
 type EventStore struct {
 	UnimplementedEventStoreServer
-	js           nats.JetStreamContext
+	js           jetstream.JetStream
 	saveEventsFn SaveEvents
 	getEventsFn  GetEvents
 }
 
 const (
-	eventsStreamPrefix          = "$ORISUN_EVENTS"
+	eventsStreamPrefix          = "ORISUN_EVENTS"
 	EventsSubjectName           = "EVENTS"
-	pubsubPrefix                = "orisun_pubsub."
-	pubsubStreamName            = "ORISUN_PUB_SUB"
+	pubsubPrefix                = "orisun_pubsub__"
 	activeSubscriptionsKVBucket = "ACTIVE_SUBSCRIPTIONS"
 )
 
 var logger logging.Logger
 
-func NewPostgresEventStoreServer(js nats.JetStreamContext,
+func GetEventsStreamName(boundary string) string {
+	return eventsStreamPrefix + "__" + boundary
+}
+
+func GetEventsSubjectName(boundary string) string {
+	return GetEventsStreamName(boundary) + "." + EventsSubjectName
+}
+
+func NewPostgresEventStoreServer(
+	ctx context.Context,
+	js jetstream.JetStream,
 	saveEventsFn SaveEvents,
 	getEventsFn GetEvents,
 	boundaries []string) *EventStore {
@@ -57,37 +66,16 @@ func NewPostgresEventStoreServer(js nats.JetStreamContext,
 
 	logger = log
 	for _, boundary := range boundaries {
-		existingStreamInfo, _ := js.StreamInfo(GetEventsStreamName(eventsStreamPrefix, boundary))
-		
-		if existingStreamInfo == nil {
-			info, err := js.AddStream(&nats.StreamConfig{
-				Name: GetEventsStreamName(eventsStreamPrefix, boundary),
-				Subjects: []string{
-					eventsStreamPrefix + "." + boundary + "." + EventsSubjectName,
-				},
-				MaxAge: 24 * time.Hour,
-			})
-			if err != nil {
-				log.Fatalf("failed to add stream: %v", err)
-			}
-			log.Infof("stream info: %v", info)
-		}
-	}
-
-	existingPubsubStreamInfo, err := js.StreamInfo(pubsubStreamName)
-	if err != nil {
-		log.Fatalf("failed to get stream info: %v", err)
-	}
-	if existingPubsubStreamInfo == nil {
-		info, errr := js.AddStream(&nats.StreamConfig{
-			Name:         pubsubStreamName,
-			Subjects:     []string{pubsubPrefix + ">"},
-			Storage:      nats.FileStorage,
-			MaxConsumers: -1, // Allow unlimited consumers
-			MaxAge:       24 * time.Hour,
+		streamName := GetEventsStreamName(boundary)
+		info, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+			Name: streamName,
+			Subjects: []string{
+				GetEventsSubjectName(boundary),
+			},
+			// MaxAge: 24 * time.Hour,
 		})
-		if errr != nil {
-			log.Fatalf("failed to add stream: %v", errr)
+		if err != nil {
+			log.Fatalf("failed to add stream: %v %v", streamName, err)
 		}
 		log.Infof("stream info: %v", info)
 	}
@@ -184,13 +172,13 @@ func (s *EventStore) GetEvents(ctx context.Context, req *GetEventsRequest) (*Get
 
 func (s *EventStore) SubscribeToEvents(req *SubscribeToEventStoreRequest, stream EventStore_SubscribeToEventsServer) error {
 	ctx, cancel := context.WithCancel(stream.Context())
-	defer cancel() // Ensure all resources are cleaned up when we exit
+	defer cancel()
 
 	// Create or access the KV store for active subscriptions
-	kv, err := s.js.CreateKeyValue(&nats.KeyValueConfig{
+	kv, err := s.js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
 		Bucket:      activeSubscriptionsKVBucket,
 		Description: "Active subscriptions",
-		Storage:     nats.MemoryStorage,
+		Storage:     jetstream.MemoryStorage,
 	})
 
 	if err != nil {
@@ -198,7 +186,8 @@ func (s *EventStore) SubscribeToEvents(req *SubscribeToEventStoreRequest, stream
 	}
 
 	// Try to create a new entry for this subscription
-	_, err = kv.Create(req.SubscriberName, []byte(time.Now().String()))
+	keyName := req.Boundary + "." + req.SubscriberName
+	_, err = kv.Put(ctx, keyName, []byte(time.Now().String()))
 	if err != nil {
 		if strings.Contains(err.Error(), "key exists") {
 			return status.Errorf(codes.AlreadyExists, "subscription already exists for subject: %s", req.SubscriberName)
@@ -207,95 +196,111 @@ func (s *EventStore) SubscribeToEvents(req *SubscribeToEventStoreRequest, stream
 	}
 
 	// Ensure we remove the KV entry when we're done
-	defer kv.Delete(req.SubscriberName)
+	defer kv.Delete(ctx, keyName)
 
-	// Set up initial position
+	// Initialize position tracking
+	var positionMu sync.RWMutex
 	lastPosition := req.Position
 	if lastPosition == nil {
 		lastPosition = &Position{CommitPosition: 0, PreparePosition: 0}
 	}
 
-	// Create a channel to signal when historical events are done
+	// Process historical events
 	historicalDone := make(chan struct{})
-
-	// Start sending historical events in a separate goroutine
-	var lastHistoricalPosition *Position
-	var lastHistoricalTime time.Time
 	var historicalErr error
 	go func() {
 		defer close(historicalDone)
-		lastHistoricalPosition, lastHistoricalTime, historicalErr = s.sendHistoricalEvents(ctx, lastPosition, req.Criteria, stream)
+		var lastTime time.Time
+		lastPosition, lastTime, historicalErr = s.sendHistoricalEvents(ctx, lastPosition, req.Criteria, stream, req.Boundary)
+		if historicalErr != nil {
+			logger.Errorf("Historical events processing failed: %v", historicalErr)
+			return
+		}
+		logger.Infof("Historical events processed up to %v", lastTime)
 	}()
 
-	// Wait for historical events to finish or context to be cancelled
+	// Wait for historical processing
 	select {
 	case <-historicalDone:
 		if historicalErr != nil {
-			return historicalErr
+			return status.Errorf(codes.Internal, "historical events failed: %v", historicalErr)
 		}
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 
-	// Set up NATS subscription
-	sub, err := s.js.SubscribeSync(EventsSubjectName, nats.StartTime(lastHistoricalTime.Add(time.Nanosecond)))
+	// Set up NATS subscription for live events
+	subs, err := s.js.Stream(ctx, GetEventsStreamName(req.Boundary))
 	if err != nil {
-		return status.Errorf(codes.Internal, "failed to subscribe to events: %v", err)
+		return status.Errorf(codes.Internal, "failed to get stream: %v", err)
 	}
-	defer sub.Unsubscribe()
 
-	// Use a WaitGroup to ensure all goroutines are done before returning
-	var wg sync.WaitGroup
-	wg.Add(1)
+	consumer, err := subs.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+		Name: req.SubscriberName,
+		// FilterSubject:  GetEventsSubjectName(req.Boundary),
+		DeliverPolicy: jetstream.DeliverNewPolicy,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		MaxDeliver:    -1,
+		ReplayPolicy:  jetstream.ReplayInstantPolicy,
+		MaxAckPending: 100,
+	})
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to create consumer: %v", err)
+	}
+	defer subs.DeleteConsumer(ctx, req.SubscriberName)
 
-	// Start processing NATS messages in a separate goroutine
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				msg, err := sub.NextMsg(time.Second)
-				if err == nats.ErrTimeout {
+	// Start consuming messages
+	msgs, err := consumer.Messages()
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to get message iterator: %v", err)
+	}
+
+	// Keep the connection alive and process new messages
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("Context cancelled, stopping subscription")
+			return ctx.Err()
+		default:
+			msg, err := msgs.Next()
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				logger.Errorf("Error getting next message: %v", err)
+				continue
+			}
+
+			var event Event
+			if err := json.Unmarshal(msg.Data(), &event); err != nil {
+				logger.Errorf("Failed to unmarshal event: %v", err)
+				msg.Ack()
+				continue
+			}
+
+			positionMu.RLock()
+			isNewer := isEventNewer(event.Position, lastPosition)
+			positionMu.RUnlock()
+
+			if isNewer && s.eventMatchesCriteria(&event, req.Criteria) {
+				if err := stream.Send(&event); err != nil {
+					logger.Errorf("Failed to send event: %v", err)
+					msg.Nak() // Negative acknowledgment to retry later
 					continue
 				}
-				if err != nil {
-					if ctx.Err() == nil {
-						// Only log if the context hasn't been cancelled
-						logger.Errorf("Error receiving message: %v", err)
-					}
-					return
-				}
 
-				var event Event
-				if err := json.Unmarshal(msg.Data, &event); err != nil {
-					logger.Errorf("Failed to unmarshal event: %v", err)
-					continue
-				}
+				positionMu.Lock()
+				lastPosition = event.Position
+				positionMu.Unlock()
 
-				if isEventNewer(event.Position, lastHistoricalPosition) {
-					if s.eventMatchesCriteria(&event, req.Criteria) {
-						if err := stream.Send(&event); err != nil {
-							if ctx.Err() == nil {
-								logger.Errorf("Error sending event: %v", err)
-							}
-							return
-						}
-					}
-					lastHistoricalPosition = event.Position
+				if err := msg.Ack(); err != nil {
+					logger.Errorf("Failed to acknowledge message: %v", err)
 				}
+			} else {
+				msg.Ack() // Acknowledge messages that don't match criteria
 			}
 		}
-	}()
-
-	// Wait for the context to be done (client disconnected or cancelled)
-	<-ctx.Done()
-
-	// Wait for all goroutines to finish
-	wg.Wait()
-
-	return ctx.Err()
+	}
 }
 
 // isEventNewer checks if the new event position is greater than the last processed position
@@ -309,7 +314,7 @@ func isEventNewer(newPosition, lastPosition *Position) bool {
 	return false
 }
 
-func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Position, criteria *Criteria, stream EventStore_SubscribeToEventsServer) (*Position, time.Time, error) {
+func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Position, criteria *Criteria, stream EventStore_SubscribeToEventsServer, boundary string) (*Position, time.Time, error) {
 	lastPosition := fromPosition
 	var lastEventTime time.Time
 	batchSize := int32(100) // Adjust as needed
@@ -320,6 +325,7 @@ func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Pos
 			LastRetrievedPosition: lastPosition,
 			Count:                 batchSize,
 			Direction:             Direction_ASC,
+			Boundary:              boundary,
 		})
 		if err != nil {
 			return nil, time.Time{}, status.Errorf(codes.Internal, "failed to fetch historical events: %v", err)
@@ -355,48 +361,83 @@ func (s *EventStore) eventMatchesCriteria(event *Event, criteria *Criteria) bool
 	return false
 }
 
+func getPubSubStreamName(subjectName string) string {
+	return pubsubPrefix + subjectName
+}
+
 func (s *EventStore) SubscribeToPubSub(req *SubscribeRequest, stream EventStore_SubscribeToPubSubServer) error {
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
 	logger.Infof("SubscribeToPubSub called with subject: %s, consumer_name: %s", req.Subject, req.ConsumerName)
 
-	sub, err := s.js.QueueSubscribe(
-		pubsubPrefix+req.Subject,
-		req.ConsumerName,
-		func(msg *nats.Msg) {
-			for {
-				err := stream.Send(&SubscribeResponse{
-					Message: &Message{
-						Id:      msg.Header.Get("Nats-Msg-Id"),
-						Subject: msg.Subject,
-						Data:    msg.Data,
-					},
-				})
+	pubSubStreamName := getPubSubStreamName(req.Subject)
+	natsStream, err := s.js.Stream(ctx, pubSubStreamName)
 
-				if err == nil {
-					// Message sent successfully, break the retry loop
-					msg.Ack()
-					break
-				}
-				if stream.Context().Err() != nil {
-					// Client has disconnected, exit the handler
-					logger.Infof("Client disconnected: %v", stream.Context().Err())
-					return
-				}
-				// Log the error and retry
-				logger.Errorf("Error sending message to gRPC stream: %v. Retrying...", err)
-				// Optional: add a short delay before retrying
-				time.Sleep(time.Millisecond * 100)
-			}
+	if err != nil && err.Error() != jetstream.ErrStreamNotFound.Error() {
+		return status.Errorf(codes.Internal, "failed to subscribe: %v", err)
+	}
+
+	if natsStream == nil {
+		natsStream, err = s.js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+			Name:              pubSubStreamName,
+			Subjects:          []string{pubSubStreamName + ".*"},
+			Storage:           jetstream.MemoryStorage,
+			MaxConsumers:      -1, // Allow unlimited consumers
+			MaxAge:            24 * time.Hour,
+			MaxMsgsPerSubject: 1000,
+		})
+		if err != nil {
+			return status.Errorf(codes.Internal, "failed to add stream: %v", err)
+		}
+		logger.Debugf("stream info: %v", natsStream)
+	}
+
+	sub, err := natsStream.CreateOrUpdateConsumer(
+		ctx,
+		jetstream.ConsumerConfig{
+			Name:          req.ConsumerName,
+			// FilterSubject: pubSubStreamName + "." + req.Subject,
+			DeliverPolicy: jetstream.DeliverNewPolicy,
+			AckPolicy:     jetstream.AckExplicitPolicy,
+			MaxAckPending: 100,
 		},
-		nats.Durable(req.ConsumerName),
-		nats.AckExplicit(),
-		nats.DeliverAll(),
-		nats.BindStream(pubsubStreamName),
 	)
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to subscribe: %v", err)
+	}
+	defer s.js.DeleteConsumer(ctx, req.ConsumerName, pubsubPrefix+req.Subject)
+
+	_, err = sub.Consume(func(msg jetstream.Msg) {
+		for {
+			err := stream.Send(&SubscribeResponse{
+				Message: &Message{
+					Id:      msg.Headers().Get("Nats-Msg-Id"),
+					Subject: msg.Subject(),
+					Data:    msg.Data(),
+				},
+			})
+
+			if err == nil {
+				// Message sent successfully, break the retry loop
+				msg.Ack()
+				break
+			}
+			if stream.Context().Err() != nil {
+				// Client has disconnected, exit the handler
+				logger.Infof("Client disconnected: %v", stream.Context().Err())
+				return
+			}
+			// Log the error and retry
+			logger.Errorf("Error sending message to gRPC stream: %v. Retrying...", err)
+			// Optional: add a short delay before retrying
+			time.Sleep(time.Millisecond * 100)
+		}
+	})
 
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to subscribe: %v", err)
 	}
-	defer sub.Unsubscribe()
 
 	<-stream.Context().Done()
 	return stream.Context().Err()
@@ -414,7 +455,7 @@ func (s *EventStore) PublishToPubSub(ctx context.Context, req *PublishRequest) (
 		return nil, status.Errorf(codes.Internal, "failed to marshal message: %v", err)
 	}
 
-	_, err = s.js.Publish(pubsubPrefix+req.Subject, msgJSON, nats.MsgId(req.Id))
+	_, err = s.js.Publish(ctx, getPubSubStreamName(req.Subject)+"."+req.Subject, msgJSON)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to publish message: %v", err)
 	}
@@ -422,19 +463,23 @@ func (s *EventStore) PublishToPubSub(ctx context.Context, req *PublishRequest) (
 	return &emptypb.Empty{}, nil
 }
 
-func GetLastPublishedPosition(js nats.JetStreamContext, boundary string) (*Position, error) {
-	eventsStreamName := GetEventsStreamName(eventsStreamPrefix, boundary)
-	info, err := js.StreamInfo(eventsStreamName)
+func GetLastPublishedPosition(ctx context.Context, js jetstream.JetStream, boundary string) (*Position, error) {
+	eventsStreamName := GetEventsStreamName(boundary)
+	stream, err := js.Stream(ctx, eventsStreamName)
 	if err != nil {
 		return nil, err
 	}
-	logger.Debugf("stream info: %v", info)
+	logger.Debugf("stream info: %v", stream)
 
+	info, err := stream.Info(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if info.State.LastSeq == 0 {
 		return &Position{CommitPosition: 0, PreparePosition: 0}, nil
 	}
 
-	msg, err := js.GetMsg(eventsStreamName, info.State.LastSeq)
+	msg, err := stream.GetMsg(ctx, info.State.LastSeq)
 	if err != nil {
 		return nil, err
 	}
@@ -445,8 +490,4 @@ func GetLastPublishedPosition(js nats.JetStreamContext, boundary string) (*Posit
 	}
 
 	return event.Position, nil
-}
-
-func GetEventsStreamName(eventsStreamPrefix string, boundary string) string {
-	return eventsStreamPrefix + "_" + boundary
 }

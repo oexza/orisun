@@ -22,6 +22,7 @@ require (
 
 require (
 	github.com/apple/foundationdb/bindings/go v0.0.0-20241122075719-ad091c173497
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl v1.0.0 // indirect

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/reflection"
@@ -19,11 +20,12 @@ import (
 	pb "orisun/src/orisun/eventstore"
 	"runtime/debug"
 
-	"github.com/nats-io/nats-server/v2/server"
 	c "orisun/src/orisun/config"
 	dbase "orisun/src/orisun/db"
 	l "orisun/src/orisun/logging"
 	postgres "orisun/src/orisun/postgres"
+
+	"github.com/nats-io/nats-server/v2/server"
 )
 
 var AppLogger l.Logger
@@ -110,13 +112,14 @@ func main() {
 	defer nc.Close()
 
 	// Create JetStream context
-	js, err := nc.JetStream()
+	js, err := jetstream.New(nc)
 	if err != nil {
 		AppLogger.Fatalf("Failed to create JetStream context: %v", err)
 	}
 
 	// Create EventStore server and start polling events from Postgres to NATS
 	eventStore := pb.NewPostgresEventStoreServer(
+		ctx,
 		js,
 		postgres.NewPostgresSaveEvents(db, AppLogger),
 		postgres.NewPostgresGetEvents(db, AppLogger),
@@ -125,14 +128,24 @@ func main() {
 
 	defer cancel()
 
+	//poll events from Postgres to NATS
 	for _, schema := range config.DB.GetSchemas() {
 		// Get last published position
-		lastPosition, err := pb.GetLastPublishedPosition(js, schema)
+		lastPosition, err := pb.GetLastPublishedPosition(ctx, js, schema)
 		if err != nil {
 			AppLogger.Fatalf("Failed to get last published position: %v", err)
 		}
-		go postgres.PollEventsFromPgToNats(ctx, db, js, eventStore, config.PollingPublisher.BatchSize,
-			lastPosition, pb.EventsSubjectName, AppLogger, schema)
+		AppLogger.Info("Last published position for schema %v: %v", schema, lastPosition)
+		go postgres.PollEventsFromPgToNats(
+			ctx,
+			db,
+			js,
+			eventStore,
+			config.PollingPublisher.BatchSize,
+			lastPosition,
+			AppLogger,
+			schema,
+		)
 	}
 
 	// Set up gRPC server with error handling

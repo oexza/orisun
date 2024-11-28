@@ -2,17 +2,18 @@ package postgres_eventstore
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"orisun/src/orisun/logging"
-	"strconv"
 	"strings"
 	"time"
 
 	eventstore "orisun/src/orisun/eventstore"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -134,6 +135,7 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
 	}
+	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, req.Boundary))
 	if err != nil {
@@ -208,9 +210,6 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		events = append(events, &event)
 	}
 
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to commit transaction: %v", err)
-	}
 	return &eventstore.GetEventsResponse{Events: events}, nil
 }
 
@@ -242,112 +241,83 @@ func getCriteriaAsList(criteria *eventstore.Criteria) []map[string]interface{} {
 }
 
 func PollEventsFromPgToNats(
-	ctx context.Context, db *sql.DB, js nats.JetStreamContext,
+	ctx context.Context, db *sql.DB, js jetstream.JetStream,
 	eventStore *eventstore.EventStore, batchSize int32, lastPosition *eventstore.Position,
-	eventsSubjectPrefix string, logger logging.Logger, boundary string) {
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("Context cancelled, stopping polling")
-			return
-		default:
-			if err := runPolling(ctx, db, js, eventStore, batchSize, lastPosition, eventsSubjectPrefix, logger, boundary); err != nil {
-				logger.Errorf("Polling failed: %v, will retry", err)
-				time.Sleep(5 * time.Second) // Add backoff before retry
-			}
-		}
-	}
-}
-
-func runPolling(ctx context.Context, db *sql.DB, js nats.JetStreamContext,
-	eventStore *eventstore.EventStore, batchSize int32,
-	lastPosition *eventstore.Position, eventsSubjectPrefix string, logger logging.Logger,
-	boundary string) error {
-	// Get a dedicated connection
+	logger logging.Logger, boundary string) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get database connection: %v", err)
 	}
 	defer conn.Close()
 
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{
-		Isolation: sql.LevelSerializable,
-		ReadOnly:  true,
-	})
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %v", err)
 	}
-	// defer tx.Commit()
+	defer tx.Rollback()
 
 	// Try to acquire the lock with retries
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return ctx.Err()
-		default:
-			var gotLock bool
-			// Convert string to integer for advisory lock
-			lockID, err := strconv.ParseInt(boundary+strconv.Itoa(advisoryLockID), 10, 64)
-			if err != nil {
-				return fmt.Errorf("failed to parse advisory lock ID: %v", err)
-			}
-			err = tx.QueryRowContext(ctx, "SELECT pg_advisory_xact_lock($1)", lockID).Scan(&gotLock)
-			if err != nil {
-				logger.Errorf("Failed to acquire lock: %v, will retry", err)
-				time.Sleep(5 * time.Second)
-				continue
-			}
-			if !gotLock {
-				logger.Info("Lock is held by another instance, will retry")
-				time.Sleep(5 * time.Second)
-				continue
-			}
-
-			logger.Info("Successfully acquired polling lock")
-			goto acquired
 		}
+
+		hash := sha256.Sum256([]byte(boundary))
+		lockID := int64(binary.BigEndian.Uint64(hash[:]))
+		
+		err = tx.QueryRowContext(ctx, "SELECT pg_advisory_xact_lock($1)", lockID).Err()
+		if err != nil {
+			logger.Errorf("Failed to acquire lock: %v, will retry", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		logger.Info("Successfully acquired polling lock for %v", boundary)
+		break
 	}
-acquired:
 
 	// Start polling loop
 	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("Context cancelled, stopping polling")
-			return ctx.Err()
-		default:
+		// if ctx.Err() != nil {
+		// 	logger.Error("Context cancelled, stopping polling")
+		// 	return ctx.Err()
+		// }
 
-			req := &eventstore.GetEventsRequest{
-				LastRetrievedPosition: lastPosition,
-				Count:                 batchSize,
-				Direction:             eventstore.Direction_ASC,
-				Boundary:              boundary,
-			}
-			resp, err := eventStore.GetEvents(ctx, req)
+		logger.Debugf("Polling for boundary: %v", boundary)
+		req := &eventstore.GetEventsRequest{
+			LastRetrievedPosition: lastPosition,
+			Count:                 batchSize,
+			Direction:             eventstore.Direction_ASC,
+			Boundary:              boundary,
+		}
+		resp, err := eventStore.GetEvents(ctx, req)
+		if err != nil {
+			return fmt.Errorf("failed to get events: %v", err)
+		}
+
+		logger.Debugf("Got %d events", len(resp.Events))
+		for _, event := range resp.Events {
+			eventData, err := json.Marshal(event)
 			if err != nil {
-				return fmt.Errorf("failed to get events: %v", err)
+				logger.Errorf("Failed to marshal event: %v", err)
+				continue
 			}
-
-			for _, event := range resp.Events {
-				eventData, err := json.Marshal(event)
-				if err != nil {
-					logger.Errorf("Failed to marshal event: %v", err)
-					continue
-				}
-				publishEventWithRetry(js, eventData, eventstore.GetEventsStreamName(eventsSubjectPrefix, boundary), logger)
-			}
+			publishEventWithRetry(ctx, js, eventData, eventstore.GetEventsSubjectName(boundary), logger)
+		}
+		if len(resp.Events) > 0 {
+			lastPosition = resp.Events[len(resp.Events)-1].Position
 		}
 		time.Sleep(1 * time.Second) // Polling interval
 	}
 }
 
-func publishEventWithRetry(js nats.JetStreamContext, eventData []byte, subjectName string, logger logging.Logger) {
+func publishEventWithRetry(ctx context.Context, js jetstream.JetStream, eventData []byte, subjectName string, logger logging.Logger) {
 	backoff := time.Second
 	maxBackoff := time.Minute * 5
 	attempt := 1
 
 	for {
-		_, err := js.Publish(subjectName, eventData)
+		_, err := js.Publish(ctx, subjectName, eventData,)
 		if err == nil {
 			logger.Debugf("Successfully published event after %d attempts", attempt)
 			return
