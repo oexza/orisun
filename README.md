@@ -51,13 +51,34 @@ Orisun will automatically:
 - Start the gRPC server
 
 
+## Key Concepts
+
+### Boundaries and Schemas
+In Orisun, a "boundary" directly corresponds to a PostgreSQL schema. When you specify a boundary in your requests, Orisun will:
+1. Automatically create the corresponding PostgreSQL schema if it doesn't exist
+2. Store all events for that boundary in that schema
+3. Maintain separate sequences and consistency guarantees per schema
+
+For example:
+- boundary: "users" → PostgreSQL schema: "users"
+- boundary: "orders" → PostgreSQL schema: "orders"
+
+### Environment Setup
+```bash
+# Multiple schemas can be pre-configured
+ORISUN_DB_SCHEMAS=users,orders,payments \
+ORISUN_DB_HOST=localhost \
+[... other config ...] \
+orisun-darwin-arm64
+```
+
 ## gRPC API Examples
 
 ### SaveEvents
-Save events with optimistic concurrency control:
+Save events to a specific schema/boundary:
 
 ```bash
-grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<
+grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents
 {
   "events": [
     {
@@ -67,26 +88,14 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<
         {"key": "aggregate_id", "value": "user-123"},
         {"key": "version", "value": "1"}
       ],
-      "data": "{\"username\": \"john_doe\", \"email\": \"john@example.com\"}",
-      "metadata": "{\"source\": \"user_service\", \"timestamp\": \"2024-01-01T12:00:00Z\"}"
+      "data": "{\"username\": \"john_doe\"}",
+      "metadata": "{\"source\": \"user_service\"}"
     }
   ],
+  "boundary": "users",  // This will use the "users" PostgreSQL schema
   "consistency_condition": {
-    "consistency_marker": {
-      "commit_position": "0",
-      "prepare_position": "0"
-    },
-    "criteria": {
-      "criteria": [
-        {
-          "tags": [
-            {"key": "aggregate_id", "value": "user-123"}
-          ]
-        }
-      ]
-    }
-  },
-  "boundary": "users"
+    // ... consistency conditions ...
+  }
 }
 ```
 
@@ -115,12 +124,13 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/GetEvents <<
 ```
 
 ### SubscribeToEvents
-Subscribe to real-time event updates:
+Subscribe to events from a specific schema/boundary:
 
 ```bash
-grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<
+grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<EOF
 {
   "subscriber_name": "my-subscriber",
+  "boundary": "users",  // This will subscribe to events in the "users" schema
   "criteria": {
     "criteria": [
       {
@@ -129,11 +139,6 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<
         ]
       }
     ]
-  },
-  "boundary": "users",
-  "position": {
-    "commit_position": "0",
-    "prepare_position": "0"
   }
 }
 ```
@@ -163,52 +168,35 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToPubSub <<
 
 ## Common Use Cases
 
-### Event Sourcing Pattern
+### Multiple Bounded Contexts
 ```bash
-# 1. Save an event
-grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<
+# User domain events in users schema
+grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<EOF
 {
-  "events": [
-    {
-      "event_id": "evt-123",
-      "event_type": "AccountCreated",
-      "tags": [
-        {"key": "aggregate_id", "value": "account-123"},
-        {"key": "version", "value": "1"}
-      ],
-      "data": "{\"initial_balance\": 1000}"
-    }
-  ],
-  "boundary": "accounts"
+  "boundary": "users",
+  "events": [...]
 }
 
-# 2. Subscribe to account events
-grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<
+# Order domain events in orders schema
+grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<EOF
 {
-  "subscriber_name": "account-processor",
-  "criteria": {
-    "criteria": [
-      {
-        "tags": [
-          {"key": "aggregate_id", "value": "account-123"}
-        ]
-      }
-    ]
-  },
-  "boundary": "accounts"
+  "boundary": "orders",
+  "events": [...]
 }
 ```
 
-### Load Balanced Processing
-```bash
-# Start multiple subscribers with the same consumer_name for load balancing
-grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToPubSub <<
-{
-  "subject": "orders",
-  "consumer_name": "order-processor"
-}
+### Schema Management
+- Each boundary (schema) maintains its own:
+  - Event sequences
+  - Consistency boundaries
+  - Indexes
+  - Event tables
 
-```
+This separation ensures:
+- Domain isolation
+- Independent scaling
+- Separate consistency guarantees
+- Clear bounded context boundaries
 
 ## Error Handling
 Common error responses:

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	reflect "reflect"
+	// reflect "reflect"
 	"runtime/debug"
 	sync "sync"
 	"time"
@@ -349,15 +349,36 @@ func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Pos
 }
 
 func (s *EventStore) eventMatchesCriteria(event *Event, criteria *Criteria) bool {
-	if len(criteria.Criteria) == 0 {
+	if criteria == nil || len(criteria.Criteria) == 0 {
 		return true
 	}
-	for i := 0; i < len(criteria.Criteria); i++ {
-		// Check if both tags are not nil and match
-		if criteria.Criteria[i].Tags != nil && event.Tags != nil && reflect.DeepEqual(criteria.Criteria[i].Tags, event.Tags) {
+
+	// For multiple criteria groups, ANY group matching is sufficient (OR logic)
+	for _, criteriaGroup := range criteria.Criteria {
+		allTagsMatch := true
+		
+		// Within a group, ALL tags must match (AND logic)
+		for _, criteriaTag := range criteriaGroup.Tags {
+			tagFound := false
+			for _, eventTag := range event.Tags {
+				if eventTag.Key == criteriaTag.Key && eventTag.Value == criteriaTag.Value {
+					tagFound = true
+					break
+				}
+			}
+			if !tagFound {
+				allTagsMatch = false
+				break
+			}
+		}
+		
+		// If all tags in this group matched, we can return true
+		if allTagsMatch {
 			return true
 		}
 	}
+
+	// No criteria group fully matched
 	return false
 }
 
