@@ -57,7 +57,7 @@ Orisun will automatically:
 Save events with optimistic concurrency control:
 
 ```bash
-grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<
 {
   "events": [
     {
@@ -88,14 +88,13 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<EOF
   },
   "boundary": "users"
 }
-EOF
 ```
 
 ### GetEvents
 Query events with criteria:
 
 ```bash
-grpcurl -d @ localhost:50051 eventstore.EventStore/GetEvents <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/GetEvents <<
 {
   "criteria": {
     "criteria": [
@@ -113,14 +112,13 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/GetEvents <<EOF
     "prepare_position": "0"
   }
 }
-EOF
 ```
 
 ### SubscribeToEvents
 Subscribe to real-time event updates:
 
 ```bash
-grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<
 {
   "subscriber_name": "my-subscriber",
   "criteria": {
@@ -138,32 +136,29 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<EOF
     "prepare_position": "0"
   }
 }
-EOF
 ```
 
 ### PublishToPubSub
 Publish a message to a pub/sub topic:
 
 ```bash
-grpcurl -d @ localhost:50051 eventstore.EventStore/PublishToPubSub <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/PublishToPubSub <<
 {
   "subject": "notifications",
   "data": "{\"message\": \"Hello World\"}",
   "metadata": "{\"priority\": \"high\"}"
 }
-EOF
 ```
 
 ### SubscribeToPubSub
 Subscribe to messages from a pub/sub topic:
 
 ```bash
-grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToPubSub <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToPubSub <<
 {
   "subject": "notifications",
   "consumer_name": "notification-processor"
 }
-EOF
 ```
 
 ## Common Use Cases
@@ -171,7 +166,7 @@ EOF
 ### Event Sourcing Pattern
 ```bash
 # 1. Save an event
-grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<
 {
   "events": [
     {
@@ -186,10 +181,9 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<EOF
   ],
   "boundary": "accounts"
 }
-EOF
 
 # 2. Subscribe to account events
-grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<
 {
   "subscriber_name": "account-processor",
   "criteria": {
@@ -203,18 +197,17 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<EOF
   },
   "boundary": "accounts"
 }
-EOF
 ```
 
 ### Load Balanced Processing
 ```bash
 # Start multiple subscribers with the same consumer_name for load balancing
-grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToPubSub <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToPubSub <<
 {
   "subject": "orders",
   "consumer_name": "order-processor"
 }
-EOF
+
 ```
 
 ## Error Handling
