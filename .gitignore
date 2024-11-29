@@ -8,6 +8,8 @@
 *.blk.gz
 *.inf
 *.sum
+data/
+build/
 
 .vscode/
 *.code-workspace

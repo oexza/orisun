@@ -140,7 +140,7 @@ func main() {
 			ctx,
 			db,
 			js,
-			eventStore,
+			postgres.NewPostgresGetEvents(db, AppLogger),
 			config.PollingPublisher.BatchSize,
 			lastPosition,
 			AppLogger,

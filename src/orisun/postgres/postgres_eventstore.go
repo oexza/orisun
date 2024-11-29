@@ -242,7 +242,7 @@ func getCriteriaAsList(criteria *eventstore.Criteria) []map[string]interface{} {
 
 func PollEventsFromPgToNats(
 	ctx context.Context, db *sql.DB, js jetstream.JetStream,
-	eventStore *eventstore.EventStore, batchSize int32, lastPosition *eventstore.Position,
+	eventStore *PostgresGetEvents, batchSize int32, lastPosition *eventstore.Position,
 	logger logging.Logger, boundary string) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -290,7 +290,7 @@ func PollEventsFromPgToNats(
 			Direction:             eventstore.Direction_ASC,
 			Boundary:              boundary,
 		}
-		resp, err := eventStore.GetEvents(ctx, req)
+		resp, err := eventStore.Get(ctx, req)
 		if err != nil {
 			return fmt.Errorf("failed to get events: %v", err)
 		}
