@@ -8,7 +8,7 @@
 *.blk.gz
 *.inf
 *.sum
-data/
+data/*
 build/
 
 .vscode/
