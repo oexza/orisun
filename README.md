@@ -50,131 +50,6 @@ Orisun will automatically:
 - Start an embedded NATS JetStream server
 - Start the gRPC server
 
-## Building from Source
-
-### Prerequisites
-- Go 1.20+
-- Make
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/orisun.git
-cd orisun
-```
-
-2. Build the binary:
-```bash
-./build.sh
-```
-
-3. Run the built binary:
-```bash
-ORISUN_DB_HOST=localhost \
-ORISUN_DB_PORT=5432 \
-ORISUN_DB_USER=postgres \
-ORISUN_DB_PASSWORD=your_password \
-ORISUN_DB_NAME=your_database \
-ORISUN_DB_SCHEMAS=your_schema \
-./orisun
-```
-
-## Usage
-
-### Starting the Server
-```bash
-cd ./orisun/src/main/orisun
-go run .
-```
-
-### GRPC API
-
-#### SaveEvents
-Save events with optimistic concurrency control:
-```protobuf
-rpc SaveEvents(SaveEventsRequest) returns (WriteResult)
-```
-
-Example request:
-```json
-{
-    "consistency_condition": {
-        "consistency_marker": {
-            "commit_position": "0",
-            "prepare_position": "0"
-        },
-        "criteria": {
-            "criteria": [
-                {
-                    "tags": [
-                        {"key": "aggregate_id", "value": "user-123"}
-                    ]
-                }
-            ]
-        }
-    },
-    "events": [
-        {
-            "event_id": "evt-123",
-            "event_type": "UserCreated",
-            "tags": [
-                {"key": "aggregate_id", "value": "user-123"},
-                {"key": "version", "value": "1"}
-            ],
-            "data": "{\"username\": \"john_doe\"}",
-            "metadata": "{\"user_agent\": \"mozilla\"}"
-        }
-    ],
-    "boundary": "test"
-}
-```
-
-#### GetEvents
-Query events with flexible criteria:
-```protobuf
-rpc GetEvents(GetEventsRequest) returns (GetEventsResponse)
-```
-
-#### SubscribeToEvents
-Subscribe to real-time event updates:
-```protobuf
-rpc SubscribeToEvents(SubscribeToEventStoreRequest) returns (stream Event)
-```
-
-#### Pub/Sub
-```protobuf
-rpc PublishToPubSub(PublishRequest) returns (google.protobuf.Empty)
-rpc SubscribeToPubSub(SubscribeRequest) returns (stream SubscribeResponse)
-```
-
-### Client Libraries
-- Go client: `orisun-client-go`
-- More coming soon...
-
-## Architecture
-Orisun uses:
-- PostgreSQL for durable event storage and consistency guarantees
-- NATS JetStream for real-time event streaming and pub/sub
-- gRPC for client-server communication
-- Protobuf for efficient serialization
-
-## Performance
-- Handles thousands of events per second
-- Efficient querying with PostgreSQL indexes
-- Load balanced message distribution
-- Optimized for both write and read operations
-
-## Contributing
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-For support, please open an issue in the GitHub repository or contact the maintainers.
 
 ## gRPC API Examples
 
@@ -348,3 +223,66 @@ Common error responses:
 - `INVALID_ARGUMENT`: Missing required fields
 - `INTERNAL`: Database or system errors
 - `NOT_FOUND`: Stream or consumer not found
+
+## Building from Source
+
+### Prerequisites
+- Go 1.20+
+- Make
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/orisun.git
+cd orisun
+```
+
+2. Build the binary:
+```bash
+./build.sh
+```
+
+3. Run the built binary:
+```bash
+ORISUN_DB_HOST=localhost \
+ORISUN_DB_PORT=5432 \
+ORISUN_DB_USER=postgres \
+ORISUN_DB_PASSWORD=your_password \
+ORISUN_DB_NAME=your_database \
+ORISUN_DB_SCHEMAS=your_schema \
+./orisun
+```
+
+## Usage
+
+### Starting the Server
+```bash
+cd ./orisun/src/main/orisun
+go run .
+```
+
+### Client Libraries
+- Go client: `orisun-client-go`
+- More coming soon...
+
+## Architecture
+Orisun uses:
+- PostgreSQL for durable event storage and consistency guarantees
+- NATS JetStream for real-time event streaming and pub/sub
+- gRPC for client-server communication
+- Protobuf for efficient serialization
+
+## Performance
+- Handles thousands of events per second
+- Efficient querying with PostgreSQL indexes
+- Load balanced message distribution
+- Optimized for both write and read operations
+
+## Contributing
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
