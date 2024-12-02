@@ -54,14 +54,34 @@ Orisun will automatically:
 ## Key Concepts
 
 ### Boundaries and Schemas
-In Orisun, a "boundary" directly corresponds to a PostgreSQL schema. When you specify a boundary in your requests, Orisun will:
-1. Automatically create the corresponding PostgreSQL schema if it doesn't exist
-2. Store all events for that boundary in that schema
-3. Maintain separate sequences and consistency guarantees per schema
+In Orisun, a "boundary" directly corresponds to a PostgreSQL schema. Boundaries must be pre-configured at startup:
+
+```bash
+# Configure allowed boundaries (schemas)
+ORISUN_DB_SCHEMAS=users,orders,payments \
+ORISUN_DB_HOST=localhost \
+[... other config ...] \
+orisun-darwin-arm64
+```
+
+When Orisun starts:
+1. It validates and creates the specified schemas if they don't exist
+2. Only requests to these pre-configured boundaries will be accepted
+3. Each boundary maintains its own:
+   - Event sequences
+   - Consistency guarantees
+   - Event tables
 
 For example:
-- boundary: "users" → PostgreSQL schema: "users"
-- boundary: "orders" → PostgreSQL schema: "orders"
+- If `ORISUN_DB_SCHEMAS=users,orders`, then:
+  - ✅ `boundary: "users"` - Request will succeed
+  - ✅ `boundary: "orders"` - Request will succeed
+  - ❌ `boundary: "payments"` - Request will fail (schema not configured)
+
+This boundary pre-configuration ensures:
+- Security through explicit schema allowlisting
+- Clear separation of domains
+- Controlled resource allocation
 
 ### Environment Setup
 ```bash
@@ -242,15 +262,13 @@ go run .
 ```
 
 ### Client Libraries
-- Go client: `orisun-client-go`
-- More coming soon...
+- coming soon...
 
 ## Architecture
 Orisun uses:
 - PostgreSQL for durable event storage and consistency guarantees
 - NATS JetStream for real-time event streaming and pub/sub
 - gRPC for client-server communication
-- Protobuf for efficient serialization
 
 ## Performance
 - Handles thousands of events per second
