@@ -30,3 +30,6 @@ src/orisun/data/
 .loadpath
 .project
 
+./bin
+.project
+clients/java/.gradle/
