@@ -33,6 +33,14 @@ type AppConfig struct {
 		Cluster        NatsClusterConfig
 	}
 	Prod bool
+	Auth struct {
+		AdminUsername string
+		AdminPassword string
+	}
+	Admin struct {
+		Port    string
+		Schema  string
+	}
 }
 
 type DBConfig struct {

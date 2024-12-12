@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	// reflect "reflect"
 	"runtime/debug"
 	sync "sync"
@@ -15,8 +16,9 @@ import (
 
 	"strings"
 
-	"github.com/nats-io/nats.go/jetstream"
 	logging "orisun/src/orisun/logging"
+
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 type SaveEvents interface {
@@ -52,7 +54,7 @@ func GetEventsSubjectName(boundary string) string {
 	return GetEventsStreamName(boundary) + "." + EventsSubjectName
 }
 
-func NewPostgresEventStoreServer(
+func NewEventStoreServer(
 	ctx context.Context,
 	js jetstream.JetStream,
 	saveEventsFn SaveEvents,
@@ -105,6 +107,7 @@ type EventWithMapTags struct {
 }
 
 func (s *EventStore) SaveEvents(ctx context.Context, req *SaveEventsRequest) (resp *WriteResult, err error) {
+	logger.Debugf("SaveEvents called with req: %v", req)
 	// Defer a recovery function to catch any panics
 	defer func() {
 		if r := recover(); r != nil {
@@ -356,7 +359,7 @@ func (s *EventStore) eventMatchesCriteria(event *Event, criteria *Criteria) bool
 	// For multiple criteria groups, ANY group matching is sufficient (OR logic)
 	for _, criteriaGroup := range criteria.Criteria {
 		allTagsMatch := true
-		
+
 		// Within a group, ALL tags must match (AND logic)
 		for _, criteriaTag := range criteriaGroup.Tags {
 			tagFound := false
@@ -371,7 +374,7 @@ func (s *EventStore) eventMatchesCriteria(event *Event, criteria *Criteria) bool
 				break
 			}
 		}
-		
+
 		// If all tags in this group matched, we can return true
 		if allTagsMatch {
 			return true
@@ -417,7 +420,7 @@ func (s *EventStore) SubscribeToPubSub(req *SubscribeRequest, stream EventStore_
 	sub, err := natsStream.CreateOrUpdateConsumer(
 		ctx,
 		jetstream.ConsumerConfig{
-			Name:          req.ConsumerName,
+			Name: req.ConsumerName,
 			// FilterSubject: pubSubStreamName + "." + req.Subject,
 			DeliverPolicy: jetstream.DeliverNewPolicy,
 			AckPolicy:     jetstream.AckExplicitPolicy,

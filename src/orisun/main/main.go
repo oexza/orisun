@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 
@@ -13,6 +15,8 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
@@ -20,10 +24,13 @@ import (
 	pb "orisun/src/orisun/eventstore"
 	"runtime/debug"
 
+	auth "orisun/src/orisun/auth"
 	c "orisun/src/orisun/config"
 	dbase "orisun/src/orisun/db"
 	l "orisun/src/orisun/logging"
 	postgres "orisun/src/orisun/postgres"
+
+	admin "orisun/src/orisun/admin"
 
 	"github.com/nats-io/nats-server/v2/server"
 )
@@ -61,7 +68,8 @@ func main() {
 
 	// Run database migrations
 	for _, schema := range config.DB.GetSchemas() {
-		if err := dbase.RunDbScripts(db, schema, ctx); err != nil {
+		isAdminSchema := schema == config.Admin.Schema
+		if err := dbase.RunDbScripts(db, schema, isAdminSchema, ctx); err != nil {
 			AppLogger.Fatalf("Failed to run database migrations for schema %s: %v", schema, err)
 		}
 		AppLogger.Info("Database migrations for schema %s completed successfully", schema)
@@ -118,11 +126,11 @@ func main() {
 	}
 
 	// Create EventStore server and start polling events from Postgres to NATS
-	eventStore := pb.NewPostgresEventStoreServer(
+	eventStore := pb.NewEventStoreServer(
 		ctx,
 		js,
-		postgres.NewPostgresSaveEvents(db, AppLogger),
-		postgres.NewPostgresGetEvents(db, AppLogger),
+		postgres.NewPostgresSaveEvents(db, &AppLogger),
+		postgres.NewPostgresGetEvents(db, &AppLogger),
 		config.DB.GetSchemas(),
 	)
 
@@ -140,7 +148,7 @@ func main() {
 			ctx,
 			db,
 			js,
-			postgres.NewPostgresGetEvents(db, AppLogger),
+			postgres.NewPostgresGetEvents(db, &AppLogger),
 			config.PollingPublisher.BatchSize,
 			lastPosition,
 			AppLogger,
@@ -148,10 +156,36 @@ func main() {
 		)
 	}
 
+	// Start admin server
+	go func() {
+		adminServer := admin.NewAdminServer(db, AppLogger, eventStore, config.Admin.Schema)
+
+		httpServer := &http.Server{
+			Addr:    fmt.Sprintf(":%s", config.Admin.Port),
+			Handler: adminServer,
+		}
+
+		AppLogger.Info("Starting admin server on port %s", config.Admin.Port)
+		if err := httpServer.ListenAndServe(); err != nil {
+			AppLogger.Errorf("Admin server error: %v", err)
+		}
+	}()
+
+	// Initialize authenticator with default admin user
+	authenticator := auth.NewAuthenticator([]auth.User{
+		{
+			Username: config.Auth.AdminUsername,
+			Password: config.Auth.AdminPassword,
+			Roles:    []auth.Role{auth.RoleAdmin},
+		},
+	})
+
 	// Set up gRPC server with error handling
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(recoveryInterceptor),
-		grpc.StreamInterceptor(streamErrorInterceptor),
+		grpc.UnaryInterceptor(auth.UnaryAuthInterceptor(authenticator)),
+		grpc.StreamInterceptor(auth.StreamAuthInterceptor(authenticator)),
+		grpc.ChainUnaryInterceptor(recoveryInterceptor),
+		grpc.ChainStreamInterceptor(streamErrorInterceptor),
 	)
 	pb.RegisterEventStoreServer(grpcServer, eventStore)
 
@@ -166,6 +200,28 @@ func main() {
 	if err != nil {
 		AppLogger.Fatalf("Failed to listen: %v", err)
 	}
+
+	go func() {
+		clientConn, err := grpc.NewClient(fmt.Sprintf("dns:///localhost:%s", config.Grpc.Port),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+
+		if err != nil {
+			AppLogger.Fatalf("Failed to create gRPC client: %v", err)
+		}
+		// defer clientConn.Close()
+		eventStoreClient := pb.NewEventStoreClient(clientConn)
+
+		// Create an authenticated context
+		ctxx := getAuthenticatedContext(config.Auth.AdminUsername, config.Auth.AdminPassword)
+		userProjector := admin.NewUserProjector(db, AppLogger, eventStoreClient, config.Admin.Schema, config.Auth.AdminUsername, config.Auth.AdminPassword)
+		err = userProjector.Start(ctxx)
+
+		if err != nil {
+			AppLogger.Fatalf("Failed to start projection %v", err)
+		}
+	}()
+
 	AppLogger.Info("Grpc Server listening on port %s", config.Grpc.Port)
 	if err := grpcServer.Serve(lis); err != nil {
 		AppLogger.Fatalf("Failed to serve: %v", err)
@@ -202,4 +258,22 @@ func convertToURLSlice(routes []string) []*url.URL {
 		urls = append(urls, u)
 	}
 	return urls
+}
+
+func createBasicAuthHeader(username, password string) string {
+	auth := username + ":" + password
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
+}
+
+func getAuthenticatedContext(username, password string) context.Context {
+	// Create Basic Auth header
+	authHeader := createBasicAuthHeader(username, password)
+
+	// Create metadata with the Authorization header
+	md := metadata.New(map[string]string{
+		"Authorization": authHeader,
+	})
+
+	// Attach metadata to the context
+	return metadata.NewOutgoingContext(context.Background(), md)
 }

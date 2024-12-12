@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Orisun User Management</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+        .success {
+            color: green;
+            margin-top: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 8px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+        }
+        .delete-btn {
+            background: #dc3545;
+        }
+        .delete-btn:hover {
+            background: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <h1>Orisun User Management</h1>
+    
+    <form hx-post="/admin/users" 
+          hx-target="#users-container"
+          hx-swap="beforeend">
+        <div class="form-group">
+            <label for="username">Username:</label>
+            <input type="text" name="username" required>
+        </div>
+        <div class="form-group">
+            <label for="password">Password:</label>
+            <input type="password" name="password" required>
+        </div>
+        <div class="form-group">
+            <label for="roles">Roles:</label>
+            <div>
+                <input type="checkbox" name="roles" value="Admin"> Admin
+                <input type="checkbox" name="roles" value="Read"> Read
+                <input type="checkbox" name="roles" value="Write"> Write
+                <input type="checkbox" name="roles" value="Operations"> Operations
+            </div>
+        </div>
+        <button type="submit">Add User</button>
+    </form>
+    <div id="message"></div>
+
+    <h2>Users</h2>
+    <div id="users-container" hx-get="/admin/users/list" hx-trigger="load">
+        <!-- User list will be loaded here -->
+    </div>
+</body>
+</html> 

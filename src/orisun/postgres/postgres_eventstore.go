@@ -40,8 +40,8 @@ type PostgresSaveEvents struct {
 	logger logging.Logger
 }
 
-func NewPostgresSaveEvents(db *sql.DB, logger logging.Logger) *PostgresSaveEvents {
-	return &PostgresSaveEvents{db: db, logger: logger}
+func NewPostgresSaveEvents(db *sql.DB, logger *logging.Logger) *PostgresSaveEvents {
+	return &PostgresSaveEvents{db: db, logger: *logger}
 }
 
 type PostgresGetEvents struct {
@@ -49,8 +49,8 @@ type PostgresGetEvents struct {
 	logger logging.Logger
 }
 
-func NewPostgresGetEvents(db *sql.DB, logger logging.Logger) *PostgresGetEvents {
-	return &PostgresGetEvents{db: db, logger: logger}
+func NewPostgresGetEvents(db *sql.DB, logger *logging.Logger) *PostgresGetEvents {
+	return &PostgresGetEvents{db: db, logger: *logger}
 }
 
 func (s *PostgresSaveEvents) Save(ctx context.Context, events *[]eventstore.EventWithMapTags, consistencyCondition *eventstore.ConsistencyCondition, boundary string) (transactionID string, globalID int64, err error) {
@@ -80,7 +80,7 @@ func (s *PostgresSaveEvents) Save(ctx context.Context, events *[]eventstore.Even
 		return "", 0, status.Errorf(codes.Internal, "failed to insert events: %v", row.Err())
 	}
 
-	s.logger.Debugf("row: %v", row)
+	// s.logger.Debugf("row: %v", row)
 	// Scan the result
 	noop := false
 	err = error(nil)
@@ -278,10 +278,10 @@ func PollEventsFromPgToNats(
 
 	// Start polling loop
 	for {
-		// if ctx.Err() != nil {
-		// 	logger.Error("Context cancelled, stopping polling")
-		// 	return ctx.Err()
-		// }
+		if ctx.Err() != nil {
+			logger.Error("Context cancelled, stopping polling")
+			return ctx.Err()
+		}
 
 		logger.Debugf("Polling for boundary: %v", boundary)
 		req := &eventstore.GetEventsRequest{

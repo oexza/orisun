@@ -11,7 +11,7 @@ grpc:
 nats:
   port: ${ORISUN_NATS_PORT:4222}
   maxPayload: ${ORISUN_NATS_MAX_PAYLOAD:1048576}
-  storeDir: ${ORISUN_NATS_STORE_DIR:../data/nats}
+  storeDir: ${ORISUN_NATS_STORE_DIR:../data/orisun-nats}
   cluster:
     name: ${ORISUN_NATS_CLUSTER_NAME:orisun-nats-cluster}
     host: ${ORISUN_NATS_CLUSTER_HOST:localhost}
@@ -26,3 +26,13 @@ pollingPublisher:
 logging:
   level: ${ORISUN_LOGGING_LEVEL:DEBUG}
 prod: ${ORISUN_IS_PROD:true}
+
+# authentication configuration
+auth:
+  adminUsername: ${ORISUN_ADMIN_USERNAME:admin}
+  adminPassword: ${ORISUN_ADMIN_PASSWORD:changeit}
+
+# Add to existing config:
+admin:
+  port: ${ORISUN_ADMIN_PORT:8999}
+  schema: ${ORISUN_ADMIN_SCHEMA:public}
