@@ -93,7 +93,6 @@ func (p *UserProjector) Start(ctx context.Context) error {
 }
 
 func (p *UserProjector) handleEvent(event *pb.Event) error {
-
 	p.logger.Debug("Handling event %v", event)
 	tx, err := p.db.Begin()
 	if err != nil {
