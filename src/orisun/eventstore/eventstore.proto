@@ -21,13 +21,13 @@ message Criterion {
   repeated Tag tags = 1;
 }
 
-message Criteria {
+message Query {
   repeated Criterion criteria = 1;
 }
 
 message ConsistencyCondition {
   Position consistency_marker = 1;
-  Criteria criteria = 2;
+  Query query = 2;
 }
 
 message EventToSave {
@@ -64,7 +64,7 @@ message SaveEventsRequest {
 }
 
 message GetEventsRequest {
-  Criteria criteria = 1;
+  Query query = 1;
   Position last_retrieved_position = 2;
   int32 count = 3;
   Direction direction = 4;
@@ -75,9 +75,9 @@ message GetEventsResponse {
   repeated Event events = 1;
 }
 
-message SubscribeToEventStoreRequest {
+message CatchUpSubscribeToEventStoreRequest {
   Position position = 1;
-  Criteria criteria = 2;
+  Query query = 2;
   string subscriber_name = 3;
   string boundary = 4;
 }
@@ -110,7 +110,7 @@ message AckRequest {
 service EventStore {
   rpc SaveEvents(SaveEventsRequest) returns (WriteResult) {}
   rpc GetEvents(GetEventsRequest) returns (GetEventsResponse) {}
-  rpc SubscribeToEvents(SubscribeToEventStoreRequest) returns (stream Event) {}
+  rpc CatchUpSubscribeToEvents(CatchUpSubscribeToEventStoreRequest) returns (stream Event) {}
   rpc PublishToPubSub(PublishRequest) returns (google.protobuf.Empty) {}
   rpc SubscribeToPubSub(SubscribeRequest) returns (stream SubscribeResponse) {}
 }

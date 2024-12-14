@@ -20,11 +20,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	EventStore_SaveEvents_FullMethodName        = "/eventstore.EventStore/SaveEvents"
-	EventStore_GetEvents_FullMethodName         = "/eventstore.EventStore/GetEvents"
-	EventStore_SubscribeToEvents_FullMethodName = "/eventstore.EventStore/SubscribeToEvents"
-	EventStore_PublishToPubSub_FullMethodName   = "/eventstore.EventStore/PublishToPubSub"
-	EventStore_SubscribeToPubSub_FullMethodName = "/eventstore.EventStore/SubscribeToPubSub"
+	EventStore_SaveEvents_FullMethodName               = "/eventstore.EventStore/SaveEvents"
+	EventStore_GetEvents_FullMethodName                = "/eventstore.EventStore/GetEvents"
+	EventStore_CatchUpSubscribeToEvents_FullMethodName = "/eventstore.EventStore/CatchUpSubscribeToEvents"
+	EventStore_PublishToPubSub_FullMethodName          = "/eventstore.EventStore/PublishToPubSub"
+	EventStore_SubscribeToPubSub_FullMethodName        = "/eventstore.EventStore/SubscribeToPubSub"
 )
 
 // EventStoreClient is the client API for EventStore service.
@@ -33,7 +33,7 @@ const (
 type EventStoreClient interface {
 	SaveEvents(ctx context.Context, in *SaveEventsRequest, opts ...grpc.CallOption) (*WriteResult, error)
 	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
-	SubscribeToEvents(ctx context.Context, in *SubscribeToEventStoreRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
+	CatchUpSubscribeToEvents(ctx context.Context, in *CatchUpSubscribeToEventStoreRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
 	PublishToPubSub(ctx context.Context, in *PublishRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	SubscribeToPubSub(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeResponse], error)
 }
@@ -66,13 +66,13 @@ func (c *eventStoreClient) GetEvents(ctx context.Context, in *GetEventsRequest, 
 	return out, nil
 }
 
-func (c *eventStoreClient) SubscribeToEvents(ctx context.Context, in *SubscribeToEventStoreRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
+func (c *eventStoreClient) CatchUpSubscribeToEvents(ctx context.Context, in *CatchUpSubscribeToEventStoreRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &EventStore_ServiceDesc.Streams[0], EventStore_SubscribeToEvents_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &EventStore_ServiceDesc.Streams[0], EventStore_CatchUpSubscribeToEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[SubscribeToEventStoreRequest, Event]{ClientStream: stream}
+	x := &grpc.GenericClientStream[CatchUpSubscribeToEventStoreRequest, Event]{ClientStream: stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (c *eventStoreClient) SubscribeToEvents(ctx context.Context, in *SubscribeT
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type EventStore_SubscribeToEventsClient = grpc.ServerStreamingClient[Event]
+type EventStore_CatchUpSubscribeToEventsClient = grpc.ServerStreamingClient[Event]
 
 func (c *eventStoreClient) PublishToPubSub(ctx context.Context, in *PublishRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -120,7 +120,7 @@ type EventStore_SubscribeToPubSubClient = grpc.ServerStreamingClient[SubscribeRe
 type EventStoreServer interface {
 	SaveEvents(context.Context, *SaveEventsRequest) (*WriteResult, error)
 	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
-	SubscribeToEvents(*SubscribeToEventStoreRequest, grpc.ServerStreamingServer[Event]) error
+	CatchUpSubscribeToEvents(*CatchUpSubscribeToEventStoreRequest, grpc.ServerStreamingServer[Event]) error
 	PublishToPubSub(context.Context, *PublishRequest) (*emptypb.Empty, error)
 	SubscribeToPubSub(*SubscribeRequest, grpc.ServerStreamingServer[SubscribeResponse]) error
 	mustEmbedUnimplementedEventStoreServer()
@@ -139,8 +139,8 @@ func (UnimplementedEventStoreServer) SaveEvents(context.Context, *SaveEventsRequ
 func (UnimplementedEventStoreServer) GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetEvents not implemented")
 }
-func (UnimplementedEventStoreServer) SubscribeToEvents(*SubscribeToEventStoreRequest, grpc.ServerStreamingServer[Event]) error {
-	return status.Errorf(codes.Unimplemented, "method SubscribeToEvents not implemented")
+func (UnimplementedEventStoreServer) CatchUpSubscribeToEvents(*CatchUpSubscribeToEventStoreRequest, grpc.ServerStreamingServer[Event]) error {
+	return status.Errorf(codes.Unimplemented, "method CatchUpSubscribeToEvents not implemented")
 }
 func (UnimplementedEventStoreServer) PublishToPubSub(context.Context, *PublishRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PublishToPubSub not implemented")
@@ -205,16 +205,16 @@ func _EventStore_GetEvents_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
-func _EventStore_SubscribeToEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(SubscribeToEventStoreRequest)
+func _EventStore_CatchUpSubscribeToEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(CatchUpSubscribeToEventStoreRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(EventStoreServer).SubscribeToEvents(m, &grpc.GenericServerStream[SubscribeToEventStoreRequest, Event]{ServerStream: stream})
+	return srv.(EventStoreServer).CatchUpSubscribeToEvents(m, &grpc.GenericServerStream[CatchUpSubscribeToEventStoreRequest, Event]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type EventStore_SubscribeToEventsServer = grpc.ServerStreamingServer[Event]
+type EventStore_CatchUpSubscribeToEventsServer = grpc.ServerStreamingServer[Event]
 
 func _EventStore_PublishToPubSub_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PublishRequest)
@@ -267,8 +267,8 @@ var EventStore_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "SubscribeToEvents",
-			Handler:       _EventStore_SubscribeToEvents_Handler,
+			StreamName:    "CatchUpSubscribeToEvents",
+			Handler:       _EventStore_CatchUpSubscribeToEvents_Handler,
 			ServerStreams: true,
 		},
 		{

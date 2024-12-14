@@ -89,12 +89,13 @@ func NewEventStoreServer(
 	}
 }
 
-func getTagsAsMap(criteria *[]*Tag) map[string]interface{} {
+func getTagsAsMap(criteria *[]*Tag, eventType string) map[string]interface{} {
 	result := make(map[string]interface{}, len(*criteria))
 
 	for _, criterion := range *criteria {
 		result[criterion.Key] = criterion.Value
 	}
+	result["eventType"] = eventType
 	return result
 }
 
@@ -138,7 +139,7 @@ func (s *EventStore) SaveEvents(ctx context.Context, req *SaveEventsRequest) (re
 			EventType: event.EventType,
 			Data:      dataMap,
 			Metadata:  metadataMap,
-			Tags:      getTagsAsMap(&event.Tags),
+			Tags:      getTagsAsMap(&event.Tags, event.EventType),
 		}
 	}
 	eventsJSON, err := json.Marshal(eventsForMarshaling)
@@ -173,7 +174,7 @@ func (s *EventStore) GetEvents(ctx context.Context, req *GetEventsRequest) (*Get
 	return s.getEventsFn.Get(ctx, req)
 }
 
-func (s *EventStore) SubscribeToEvents(req *SubscribeToEventStoreRequest, stream EventStore_SubscribeToEventsServer) error {
+func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreRequest, stream EventStore_CatchUpSubscribeToEventsServer) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
@@ -214,7 +215,7 @@ func (s *EventStore) SubscribeToEvents(req *SubscribeToEventStoreRequest, stream
 	go func() {
 		defer close(historicalDone)
 		var lastTime time.Time
-		lastPosition, lastTime, historicalErr = s.sendHistoricalEvents(ctx, lastPosition, req.Criteria, stream, req.Boundary)
+		lastPosition, lastTime, historicalErr = s.sendHistoricalEvents(ctx, lastPosition, req.Query, stream, req.Boundary)
 		if historicalErr != nil {
 			logger.Errorf("Historical events processing failed: %v", historicalErr)
 			return
@@ -285,7 +286,7 @@ func (s *EventStore) SubscribeToEvents(req *SubscribeToEventStoreRequest, stream
 			isNewer := isEventNewer(event.Position, lastPosition)
 			positionMu.RUnlock()
 
-			if isNewer && s.eventMatchesCriteria(&event, req.Criteria) {
+			if isNewer && s.eventMatchesQueryCriteria(&event, req.Query) {
 				if err := stream.Send(&event); err != nil {
 					logger.Errorf("Failed to send event: %v", err)
 					msg.Nak() // Negative acknowledgment to retry later
@@ -317,14 +318,14 @@ func isEventNewer(newPosition, lastPosition *Position) bool {
 	return false
 }
 
-func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Position, criteria *Criteria, stream EventStore_SubscribeToEventsServer, boundary string) (*Position, time.Time, error) {
+func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Position, query *Query, stream EventStore_CatchUpSubscribeToEventsServer, boundary string) (*Position, time.Time, error) {
 	lastPosition := fromPosition
 	var lastEventTime time.Time
 	batchSize := int32(100) // Adjust as needed
 
 	for {
 		events, err := s.GetEvents(ctx, &GetEventsRequest{
-			Criteria:              criteria,
+			Query:                 query,
 			LastRetrievedPosition: lastPosition,
 			Count:                 batchSize,
 			Direction:             Direction_ASC,
@@ -351,7 +352,7 @@ func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Pos
 	return lastPosition, lastEventTime, nil
 }
 
-func (s *EventStore) eventMatchesCriteria(event *Event, criteria *Criteria) bool {
+func (s *EventStore) eventMatchesQueryCriteria(event *Event, criteria *Query) bool {
 	if criteria == nil || len(criteria.Criteria) == 0 {
 		return true
 	}

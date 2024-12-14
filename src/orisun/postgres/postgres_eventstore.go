@@ -106,8 +106,8 @@ func (s *PostgresSaveEvents) Save(ctx context.Context, events *[]eventstore.Even
 
 func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRequest) (*eventstore.GetEventsResponse, error) {
 	var criteriaList []map[string]interface{}
-	if req.Criteria != nil {
-		criteriaList = getCriteriaAsList(req.Criteria)
+	if req.Query != nil {
+		criteriaList = getCriteriaAsList(req.Query)
 	}
 
 	fromPosition := map[string]int64{
@@ -220,7 +220,7 @@ func getConsistencyConditionAsMap(consistencyCondition *eventstore.ConsistencyCo
 		lastRetrievedPositions["global_id"] = consistencyCondition.ConsistencyMarker.PreparePosition
 	}
 
-	criteriaList := getCriteriaAsList(consistencyCondition.Criteria)
+	criteriaList := getCriteriaAsList(consistencyCondition.Query)
 
 	return map[string]interface{}{
 		"last_retrieved_position": lastRetrievedPositions,
@@ -228,9 +228,9 @@ func getConsistencyConditionAsMap(consistencyCondition *eventstore.ConsistencyCo
 	}
 }
 
-func getCriteriaAsList(criteria *eventstore.Criteria) []map[string]interface{} {
-	result := make([]map[string]interface{}, 0, len(criteria.Criteria))
-	for _, criterion := range criteria.Criteria {
+func getCriteriaAsList(query *eventstore.Query) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(query.Criteria))
+	for _, criterion := range query.Criteria {
 		anded := make(map[string]interface{}, len(criterion.Tags))
 		for _, tag := range criterion.Tags {
 			anded[tag.Key] = tag.Value

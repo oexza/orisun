@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -39,20 +40,6 @@ type AdminServer struct {
 type User struct {
 	Username string
 	Roles    []string
-}
-
-// Event types
-const (
-	EventTypeUserCreated     = "$UserCreated"
-	EventTypeUserDeleted     = "$UserDeleted"
-	EventTypeRolesChanged    = "$RolesChanged"
-	EventTypePasswordChanged = "$PasswordChanged"
-)
-
-type UserEvent struct {
-	Username     string   `json:"username"`
-	Roles        []string `json:"roles,omitempty"`
-	PasswordHash string   `json:"password_hash,omitempty"`
 }
 
 func NewAdminServer(db *sql.DB, logger l.Logger, eventStore pb.EventStoreServer, schema string) *AdminServer {
@@ -107,7 +94,7 @@ func (s *AdminServer) handleUsersList(w http.ResponseWriter, r *http.Request) {
 		CurrentUser string
 	}{
 		Users:       users,
-		CurrentUser: r.Context().Value(contextKeyUser).(string),
+		CurrentUser: "r.Context().Value(contextKeyUser).(string)",
 	}
 
 	s.tmpl.ExecuteTemplate(w, "user-list.html", data)
@@ -154,7 +141,7 @@ func (s *AdminServer) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := parts[3]
-	currentUser := r.Context().Value(contextKeyUser).(string)
+	currentUser := "r.Context().Value(contextKeyUser).(string)"
 
 	if username == currentUser {
 		http.Error(w, "Cannot delete your own account", http.StatusBadRequest)
@@ -162,7 +149,7 @@ func (s *AdminServer) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.deleteUser(username); err != nil {
-		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
+		http.Error(w, "Failed to delete user "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -180,7 +167,7 @@ func (s *AdminServer) listUsers() ([]User, error) {
 	var users []User
 	for rows.Next() {
 		var user User
-		if err := rows.Scan(&user.Username, &user.Roles); err != nil {
+		if err := rows.Scan(&user.Username, pq.Array(&user.Roles)); err != nil {
 			s.logger.Error("Failed to scan user row: %v", err)
 			continue
 		}
@@ -205,7 +192,7 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 			PreparePosition: 999999999999999999,
 			CommitPosition:  999999999999999999,
 		},
-		Criteria: &pb.Criteria{
+		Query: &pb.Query{
 			Criteria: []*pb.Criterion{
 				{
 					Tags: []*pb.Tag{
@@ -228,7 +215,7 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 	}
 
 	// Create user created event
-	event := UserEvent{
+	event := UserCreated{
 		Username:     username,
 		Roles:        roles,
 		PasswordHash: string(hash),
@@ -249,7 +236,7 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 			PreparePosition: 00,
 			CommitPosition:  00,
 		},
-		Criteria: &pb.Criteria{
+		Query: &pb.Query{
 			Criteria: []*pb.Criterion{
 				{
 					Tags: []*pb.Tag{
@@ -270,7 +257,6 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 				Data:      string(eventData),
 				Tags: []*pb.Tag{
 					{Key: userTag, Value: username},
-					{Key: "eventType", Value: EventTypeUserCreated},
 				},
 				Metadata: "{\"schema\":\"" + s.schema + "\"}",
 			},
@@ -281,7 +267,7 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 }
 
 func (s *AdminServer) deleteUser(username string) error {
-	event := UserEvent{
+	event := UserDeleted{
 		Username: username,
 	}
 
@@ -297,11 +283,27 @@ func (s *AdminServer) deleteUser(username string) error {
 	}
 	_, err = s.eventStore.SaveEvents(context.Background(), &pb.SaveEventsRequest{
 		Boundary: s.schema,
+		ConsistencyCondition: &pb.ConsistencyCondition{
+			ConsistencyMarker: &pb.Position{
+				PreparePosition: 999999999999999999,
+				CommitPosition:  999999999999999999,
+			},
+			Query: &pb.Query{
+				Criteria: []*pb.Criterion{
+					{
+						Tags: []*pb.Tag{},
+					},
+				},
+			},
+		},
 		Events: []*pb.EventToSave{{
 			EventId:   id.String(),
 			EventType: EventTypeUserDeleted,
 			Data:      string(eventData),
-			Tags:      []*pb.Tag{{Key: userTag, Value: username}},
+			Tags: []*pb.Tag{
+				{Key: userTag, Value: username},
+			},
+			Metadata: "{\"schema\":\"" + s.schema + "\"}",
 		}},
 	})
 
@@ -311,4 +313,3 @@ func (s *AdminServer) deleteUser(username string) error {
 func (s *AdminServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
-

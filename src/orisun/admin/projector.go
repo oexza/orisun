@@ -45,14 +45,14 @@ func (p *UserProjector) Start(ctx context.Context) error {
 	}
 
 	// Subscribe from last checkpoint
-	stream, err := p.eventStore.SubscribeToEvents(ctx, &pb.SubscribeToEventStoreRequest{
+	stream, err := p.eventStore.CatchUpSubscribeToEvents(ctx, &pb.CatchUpSubscribeToEventStoreRequest{
 		SubscriberName: "user_projector",
 		Boundary:       p.schema,
 		Position: &pb.Position{
 			CommitPosition:  commitPos,
 			PreparePosition: preparePos,
 		},
-		Criteria: &pb.Criteria{
+		Query: &pb.Query{
 			Criteria: []*pb.Criterion{
 				{
 					Tags: []*pb.Tag{},
@@ -102,7 +102,7 @@ func (p *UserProjector) handleEvent(event *pb.Event) error {
 
 	switch event.EventType {
 	case EventTypeUserCreated:
-		var userEvent UserEvent
+		var userEvent UserCreated
 		if err := json.Unmarshal([]byte(event.Data), &userEvent); err != nil {
 			return err
 		}
@@ -114,26 +114,30 @@ func (p *UserProjector) handleEvent(event *pb.Event) error {
 			userEvent.Username, userEvent.PasswordHash, rolesStr,
 		)
 
-	// case EventTypeUserDeleted:
-	// 	_, err = tx.Exec(
-	// 		fmt.Sprintf("DELETE FROM %s.users WHERE username = $1",
-	// 			p.schema),
-	// 		userEvent.Username,
-	// 	)
+	case EventTypeUserDeleted:
+		var userEvent UserDeleted
+		if err := json.Unmarshal([]byte(event.Data), &userEvent); err != nil {
+			return err
+		}
+		_, err = tx.Exec(
+			fmt.Sprintf("DELETE FROM %s.users WHERE username = $1",
+				p.schema),
+			userEvent.Username,
+		)
 
-	// case EventTypeRolesChanged:
-	// 	_, err = tx.Exec(
-	// 		fmt.Sprintf("UPDATE %s.users SET roles = $1 WHERE username = $2",
-	// 			p.schema),
-	// 		userEvent.Roles, userEvent.Username,
-	// 	)
+		// case EventTypeRolesChanged:
+		// 	_, err = tx.Exec(
+		// 		fmt.Sprintf("UPDATE %s.users SET roles = $1 WHERE username = $2",
+		// 			p.schema),
+		// 		userEvent.Roles, userEvent.Username,
+		// 	)
 
-	// case EventTypePasswordChanged:
-	// 	_, err = tx.Exec(
-	// 		fmt.Sprintf("UPDATE %s.users SET password_hash = $1 WHERE username = $2",
-	// 			p.schema),
-	// 		userEvent.PasswordHash, userEvent.Username,
-	// 	)
+		// case EventTypePasswordChanged:
+		// 	_, err = tx.Exec(
+		// 		fmt.Sprintf("UPDATE %s.users SET password_hash = $1 WHERE username = $2",
+		// 			p.schema),
+		// 		userEvent.PasswordHash, userEvent.Username,
+		// 	)
 	}
 
 	if err != nil {
