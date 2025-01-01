@@ -32,7 +32,7 @@ type AppConfig struct {
 		StoreDir       string
 		Cluster        NatsClusterConfig
 	}
-	Prod bool
+	// Prod bool
 	Auth struct {
 		AdminUsername string
 		AdminPassword string

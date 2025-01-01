@@ -22,23 +22,18 @@ type Logger interface {
 }
 
 func GlobalLogger() (Logger, error) {
-    if appLogger != nil {
+	if appLogger != nil {
 		return appLogger, nil
 	}
-    return nil, fmt.Errorf("No logger configured")
+	return nil, fmt.Errorf("No logger configured")
 }
 
-func ZapLogger(level string, production bool) (Logger, error) {
+func ZapLogger(level string) (Logger, error) {
 	if appLogger != nil {
 		return appLogger, nil
 	}
 
-	var cfg zap.Config
-	if production {
-		cfg = zap.NewProductionConfig()
-	} else {
-		cfg = zap.NewDevelopmentConfig()
-	}
+	var cfg = zap.NewProductionConfig()
 
 	lvl, err := zapcore.ParseLevel(level)
 	if err != nil {
@@ -51,7 +46,7 @@ func ZapLogger(level string, production bool) (Logger, error) {
 		return nil, err
 	}
 
-    appLogger = logger.Sugar()
+	appLogger = logger.Sugar()
 	return appLogger, nil
 }
 

@@ -80,7 +80,6 @@ func (s *PostgresSaveEvents) Save(ctx context.Context, events *[]eventstore.Even
 		return "", 0, status.Errorf(codes.Internal, "failed to insert events: %v", row.Err())
 	}
 
-	// s.logger.Debugf("row: %v", row)
 	// Scan the result
 	noop := false
 	err = error(nil)
@@ -241,9 +240,14 @@ func getCriteriaAsList(query *eventstore.Query) []map[string]interface{} {
 }
 
 func PollEventsFromPgToNats(
-	ctx context.Context, db *sql.DB, js jetstream.JetStream,
-	eventStore *PostgresGetEvents, batchSize int32, lastPosition *eventstore.Position,
-	logger logging.Logger, boundary string) error {
+	ctx context.Context,
+	db *sql.DB,
+	js jetstream.JetStream,
+	eventStore *PostgresGetEvents,
+	batchSize int32,
+	lastPosition *eventstore.Position,
+	logger logging.Logger,
+	boundary string) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get database connection: %v", err)
@@ -264,7 +268,7 @@ func PollEventsFromPgToNats(
 
 		hash := sha256.Sum256([]byte(boundary))
 		lockID := int64(binary.BigEndian.Uint64(hash[:]))
-		
+
 		err = tx.QueryRowContext(ctx, "SELECT pg_advisory_xact_lock($1)", lockID).Err()
 		if err != nil {
 			logger.Errorf("Failed to acquire lock: %v, will retry", err)
@@ -296,13 +300,14 @@ func PollEventsFromPgToNats(
 		}
 
 		logger.Debugf("Got %d events", len(resp.Events))
+
 		for _, event := range resp.Events {
 			eventData, err := json.Marshal(event)
 			if err != nil {
 				logger.Errorf("Failed to marshal event: %v", err)
 				continue
 			}
-			publishEventWithRetry(ctx, js, eventData, eventstore.GetEventsSubjectName(boundary), logger)
+			publishEventWithRetry(ctx, js, eventData, eventstore.GetEventsSubjectName(boundary), logger, event.Position.PreparePosition, event.Position.CommitPosition)
 		}
 		if len(resp.Events) > 0 {
 			lastPosition = resp.Events[len(resp.Events)-1].Position
@@ -311,13 +316,15 @@ func PollEventsFromPgToNats(
 	}
 }
 
-func publishEventWithRetry(ctx context.Context, js jetstream.JetStream, eventData []byte, subjectName string, logger logging.Logger) {
+func publishEventWithRetry(ctx context.Context, js jetstream.JetStream, eventData []byte,
+	subjectName string, logger logging.Logger, preparePosition int64, commitPosition int64) {
 	backoff := time.Second
 	maxBackoff := time.Minute * 5
 	attempt := 1
 
 	for {
-		_, err := js.Publish(ctx, subjectName, eventData,)
+		pubOpts := jetstream.PublishOpt(jetstream.WithMsgID(eventstore.GetEventNatsMessageId(preparePosition, commitPosition)))
+		_, err := js.Publish(ctx, subjectName, eventData, pubOpts)
 		if err == nil {
 			logger.Debugf("Successfully published event after %d attempts", attempt)
 			return

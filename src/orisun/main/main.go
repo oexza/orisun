@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,7 +18,8 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+
+	// "google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
@@ -37,6 +41,52 @@ import (
 
 var AppLogger l.Logger
 
+type pgLockProvider struct {
+	db *sql.DB
+}
+
+func (m *pgLockProvider) Lock(ctx context.Context, lockName string) (pb.UnlockFunc, error) {
+	AppLogger.Debugf("Lock called for: %v", lockName)
+	conn, err := m.db.Conn(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
+
+	if err != nil {
+		return nil, err
+	}
+
+	hash := sha256.Sum256([]byte(lockName))
+	lockID := int64(binary.BigEndian.Uint64(hash[:]))
+
+	var acquired bool
+
+	err = tx.QueryRowContext(ctx, "SELECT pg_try_advisory_xact_lock($1)", int32(lockID)).Scan(&acquired)
+
+	if err != nil {
+		AppLogger.Errorf("Failed to acquire lock: %v, will retry", err)
+		return nil, err
+	}
+
+	if !acquired {
+		AppLogger.Warnf("Failed to acquire lock within timeout")
+		return nil, errors.New("lock acquisition timed out")
+	}
+
+	unlockFunc := func() error {
+		AppLogger.Debugf("Unlock called for: %v", lockName)
+		defer conn.Close()
+		defer tx.Rollback()
+
+		return nil
+	}
+
+	return unlockFunc, nil
+}
+
 func main() {
 	defer logger.Println("Server shutting down")
 
@@ -47,7 +97,7 @@ func main() {
 	}
 
 	// Initialize logger
-	logr, err := l.ZapLogger(config.Logging.Level, config.Prod)
+	logr, err := l.ZapLogger(config.Logging.Level)
 	if err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		os.Exit(1)
@@ -125,12 +175,15 @@ func main() {
 		AppLogger.Fatalf("Failed to create JetStream context: %v", err)
 	}
 
-	// Create EventStore server and start polling events from Postgres to NATS
+	// Create EventStore grpc server
 	eventStore := pb.NewEventStoreServer(
 		ctx,
 		js,
 		postgres.NewPostgresSaveEvents(db, &AppLogger),
 		postgres.NewPostgresGetEvents(db, &AppLogger),
+		&pgLockProvider{
+			db: db,
+		},
 		config.DB.GetSchemas(),
 	)
 
@@ -202,20 +255,20 @@ func main() {
 	}
 
 	go func() {
-		clientConn, err := grpc.NewClient(fmt.Sprintf("dns:///localhost:%s", config.Grpc.Port),
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
+		// clientConn, err := grpc.NewClient(fmt.Sprintf("dns:///localhost:%s", config.Grpc.Port),
+		// 	grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// )
 
 		if err != nil {
 			AppLogger.Fatalf("Failed to create gRPC client: %v", err)
 		}
 		// defer clientConn.Close()
-		eventStoreClient := pb.NewEventStoreClient(clientConn)
+		// eventStoreClient := pb.NewEventStoreClient(clientConn)
 
 		// Create an authenticated context
-		ctxx := getAuthenticatedContext(config.Auth.AdminUsername, config.Auth.AdminPassword)
-		userProjector := admin.NewUserProjector(db, AppLogger, eventStoreClient, config.Admin.Schema, config.Auth.AdminUsername, config.Auth.AdminPassword)
-		err = userProjector.Start(ctxx)
+		// ctxx := getAuthenticatedContext(config.Auth.AdminUsername, config.Auth.AdminPassword)
+		// userProjector := admin.NewUserProjector(db, AppLogger, eventStoreClient, config.Admin.Schema, config.Auth.AdminUsername, config.Auth.AdminPassword)
+		// err = userProjector.Start(ctxx)
 
 		if err != nil {
 			AppLogger.Fatalf("Failed to start projection %v", err)
@@ -232,7 +285,7 @@ func streamErrorInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.St
 	err := handler(srv, ss)
 	if err != nil {
 		AppLogger.Errorf("Error in streaming RPC %s: %v", info.FullMethod, err)
-		return status.Errorf(codes.Internal, "Internal server error")
+		return status.Errorf(codes.Internal, "Error: %v", err)
 	}
 	return nil
 }

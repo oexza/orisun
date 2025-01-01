@@ -117,15 +117,16 @@ func (s *AdminServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return just the new user row
-	user := User{Username: username, Roles: roles}
-	data := struct {
-		User        User
-		CurrentUser string
-	}{
-		User:        user,
-		CurrentUser: "r.Context().Value(contextKeyUser).(string)",
-	}
-	s.tmpl.ExecuteTemplate(w, "user-row.html", data)
+	// user := User{Username: username, Roles: roles}
+	// data := struct {
+	// 	User        User
+	// 	CurrentUser string
+	// }{
+	// 	User:        user,
+	// 	CurrentUser: "r.Context().Value(contextKeyUser).(string)",
+	// }
+	w.WriteHeader(http.StatusNoContent)
+	// s.tmpl.ExecuteTemplate(w, "user-row.html", data)
 }
 
 func (s *AdminServer) handleUserDelete(w http.ResponseWriter, r *http.Request) {
@@ -258,7 +259,7 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 				Tags: []*pb.Tag{
 					{Key: userTag, Value: username},
 				},
-				Metadata: "{\"schema\":\"" + s.schema + "\"}",
+				Metadata: "{\"schema\":\"" + s.schema + "\",\"createdBy\":\"" + id.String() + "\"}",
 			},
 		},
 	})
@@ -303,7 +304,7 @@ func (s *AdminServer) deleteUser(username string) error {
 			Tags: []*pb.Tag{
 				{Key: userTag, Value: username},
 			},
-			Metadata: "{\"schema\":\"" + s.schema + "\"}",
+			Metadata: "{\"schema\":\"" + s.schema + "\",\"createdBy\":\"" + id.String() + "\"}",
 		}},
 	})
 

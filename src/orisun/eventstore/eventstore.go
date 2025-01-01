@@ -7,18 +7,17 @@ import (
 
 	// reflect "reflect"
 	"runtime/debug"
-	sync "sync"
+	// sync "sync"
 	"time"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 
-	"strings"
+	// "strings"
 
 	logging "orisun/src/orisun/logging"
-
-	"github.com/nats-io/nats.go/jetstream"
 )
 
 type SaveEvents interface {
@@ -30,11 +29,23 @@ type GetEvents interface {
 	Get(ctx context.Context, req *GetEventsRequest) (*GetEventsResponse, error)
 }
 
+type UnlockFunc func() error
+
+type LockProvider interface {
+	Lock(ctx context.Context, lockName string) (UnlockFunc, error)
+}
+
+type SubscriberPostionManager interface {
+	Save(ctx context.Context, subscriber string, eventstoreContext string, postion *Position) error
+	Get(ctx context.Context, subscriber string, eventstoreContext string) (*Position, error)
+}
+
 type EventStore struct {
 	UnimplementedEventStoreServer
 	js           jetstream.JetStream
 	saveEventsFn SaveEvents
 	getEventsFn  GetEvents
+	lockProvider LockProvider
 }
 
 const (
@@ -59,6 +70,7 @@ func NewEventStoreServer(
 	js jetstream.JetStream,
 	saveEventsFn SaveEvents,
 	getEventsFn GetEvents,
+	lockProvider LockProvider,
 	boundaries []string) *EventStore {
 	log, err := logging.GlobalLogger()
 
@@ -74,11 +86,15 @@ func NewEventStoreServer(
 			Subjects: []string{
 				GetEventsSubjectName(boundary),
 			},
-			// MaxAge: 24 * time.Hour,
+			MaxMsgs: 100,
+			// MaxAge:  5 * time.Minute,
+			// Storage: jetstream.MemoryStorage,
 		})
+
 		if err != nil {
 			log.Fatalf("failed to add stream: %v %v", streamName, err)
 		}
+
 		log.Infof("stream info: %v", info)
 	}
 
@@ -86,6 +102,7 @@ func NewEventStoreServer(
 		js:           js,
 		saveEventsFn: saveEventsFn,
 		getEventsFn:  getEventsFn,
+		lockProvider: lockProvider,
 	}
 }
 
@@ -170,7 +187,6 @@ func (s *EventStore) GetEvents(ctx context.Context, req *GetEventsRequest) (*Get
 	if req.LastRetrievedPosition == nil || req.Count == 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "LastRetrievedPosition and Count are required")
 	}
-
 	return s.getEventsFn.Get(ctx, req)
 }
 
@@ -178,48 +194,66 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
+	unlockFunc, err := s.lockProvider.Lock(ctx, req.Boundary+"__"+req.SubscriberName)
+
+	if err != nil {
+		return status.Errorf(codes.AlreadyExists, "failed to acquire lock: %v", err)
+	}
+	defer unlockFunc()
+
 	// Create or access the KV store for active subscriptions
-	kv, err := s.js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:      activeSubscriptionsKVBucket,
-		Description: "Active subscriptions",
-		Storage:     jetstream.MemoryStorage,
-	})
+	// kv, err := s.js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+	// 	Bucket:      activeSubscriptionsKVBucket,
+	// 	Description: "Active subscriptions",
+	// 	Storage:     jetstream.MemoryStorage,
+	// })
 
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed to access KV store: %v", err)
-	}
+	// if err != nil {
+	// 	return status.Errorf(codes.Internal, "failed to access KV store: %v", err)
+	// }
 
-	// Try to create a new entry for this subscription
-	keyName := req.Boundary + "." + req.SubscriberName
-	_, err = kv.Put(ctx, keyName, []byte(time.Now().String()))
-	if err != nil {
-		if strings.Contains(err.Error(), "key exists") {
-			return status.Errorf(codes.AlreadyExists, "subscription already exists for subject: %s", req.SubscriberName)
-		}
-		return status.Errorf(codes.Internal, "failed to create subscription entry: %v", err)
-	}
+	// // Try to create a new entry for this subscription
+	// keyName := req.Boundary + "." + req.SubscriberName
+	// _, err = kv.Put(ctx, keyName, []byte(time.Now().String()))
+	// if err != nil {
+	// 	if strings.Contains(err.Error(), "key exists") {
+	// 		return status.Errorf(codes.AlreadyExists, "subscription already exists for subject: %s", req.SubscriberName)
+	// 	}
+	// 	return status.Errorf(codes.Internal, "failed to create subscription entry: %v", err)
+	// }
 
-	// Ensure we remove the KV entry when we're done
-	defer kv.Delete(ctx, keyName)
+	// // Ensure we remove the KV entry when we're done
+	// defer kv.Delete(ctx, keyName)
 
 	// Initialize position tracking
-	var positionMu sync.RWMutex
-	lastPosition := req.Position
-	if lastPosition == nil {
-		lastPosition = &Position{CommitPosition: 0, PreparePosition: 0}
-	}
+	// var positionMu sync.RWMutex
+	lastPosition := req.GetPosition()
 
 	// Process historical events
 	historicalDone := make(chan struct{})
 	var historicalErr error
+	var lastTime time.Time
+
 	go func() {
 		defer close(historicalDone)
-		var lastTime time.Time
-		lastPosition, lastTime, historicalErr = s.sendHistoricalEvents(ctx, lastPosition, req.Query, stream, req.Boundary)
+
+		lastPosition, lastTime, historicalErr = s.sendHistoricalEvents(
+			ctx,
+			lastPosition,
+			req.Query,
+			stream,
+			req.Boundary,
+			req.SubscriberName,
+		)
+
 		if historicalErr != nil {
 			logger.Errorf("Historical events processing failed: %v", historicalErr)
 			return
 		}
+		if (lastTime == time.Time{}) {
+			lastTime = time.Now()
+		}
+
 		logger.Infof("Historical events processed up to %v", lastTime)
 	}()
 
@@ -242,19 +276,20 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 	consumer, err := subs.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 		Name: req.SubscriberName,
 		// FilterSubject:  GetEventsSubjectName(req.Boundary),
-		DeliverPolicy: jetstream.DeliverNewPolicy,
-		AckPolicy:     jetstream.AckExplicitPolicy,
+		DeliverPolicy: jetstream.DeliverByStartTimePolicy,
+		AckPolicy:     jetstream.AckNonePolicy,
 		MaxDeliver:    -1,
 		ReplayPolicy:  jetstream.ReplayInstantPolicy,
-		MaxAckPending: 100,
+		OptStartTime:  &lastTime,
 	})
+
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to create consumer: %v", err)
 	}
 	defer subs.DeleteConsumer(ctx, req.SubscriberName)
 
 	// Start consuming messages
-	msgs, err := consumer.Messages()
+	msgs, err := consumer.Messages(jetstream.PullMaxMessages(200))
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to get message iterator: %v", err)
 	}
@@ -263,12 +298,14 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("Context cancelled, stopping subscription")
+			logger.Error("Context cancelled, stopping subscription")
+			unlockFunc()
 			return ctx.Err()
 		default:
 			msg, err := msgs.Next()
 			if err != nil {
 				if ctx.Err() != nil {
+					logger.Errorf("Error in subscription context: %v", err)
 					return ctx.Err()
 				}
 				logger.Errorf("Error getting next message: %v", err)
@@ -282,9 +319,9 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 				continue
 			}
 
-			positionMu.RLock()
+			// positionMu.RLock()
 			isNewer := isEventNewer(event.Position, lastPosition)
-			positionMu.RUnlock()
+			// positionMu.RUnlock()
 
 			if isNewer && s.eventMatchesQueryCriteria(&event, req.Query) {
 				if err := stream.Send(&event); err != nil {
@@ -293,9 +330,9 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 					continue
 				}
 
-				positionMu.Lock()
+				// positionMu.Lock()
 				lastPosition = event.Position
-				positionMu.Unlock()
+				// positionMu.Unlock()
 
 				if err := msg.Ack(); err != nil {
 					logger.Errorf("Failed to acknowledge message: %v", err)
@@ -305,6 +342,25 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 			}
 		}
 	}
+}
+
+type ComparationResult int
+
+const IsLessThan ComparationResult = -1
+const IsEqual ComparationResult = 0
+const IsGreaterThan ComparationResult = 1
+
+func ComparePositions(p1, p2 *Position) ComparationResult {
+	if p1.CommitPosition == p2.CommitPosition && p1.PreparePosition == p2.PreparePosition {
+		return 0
+	}
+
+	if (p1.CommitPosition < p2.CommitPosition) ||
+		(p1.CommitPosition == p2.CommitPosition && p1.PreparePosition < p2.PreparePosition) {
+		return -1
+	}
+
+	return 1
 }
 
 // isEventNewer checks if the new event position is greater than the last processed position
@@ -318,7 +374,14 @@ func isEventNewer(newPosition, lastPosition *Position) bool {
 	return false
 }
 
-func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Position, query *Query, stream EventStore_CatchUpSubscribeToEventsServer, boundary string) (*Position, time.Time, error) {
+func (s *EventStore) sendHistoricalEvents(
+	ctx context.Context,
+	fromPosition *Position,
+	query *Query,
+	stream EventStore_CatchUpSubscribeToEventsServer,
+	boundary string,
+	subscriberName string) (*Position, time.Time, error) {
+
 	lastPosition := fromPosition
 	var lastEventTime time.Time
 	batchSize := int32(100) // Adjust as needed
@@ -331,6 +394,7 @@ func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Pos
 			Direction:             Direction_ASC,
 			Boundary:              boundary,
 		})
+
 		if err != nil {
 			return nil, time.Time{}, status.Errorf(codes.Internal, "failed to fetch historical events: %v", err)
 		}
@@ -348,6 +412,8 @@ func (s *EventStore) sendHistoricalEvents(ctx context.Context, fromPosition *Pos
 			break
 		}
 	}
+
+	logger.Debugf("Finished sending historical events %v")
 
 	return lastPosition, lastEventTime, nil
 }
@@ -448,6 +514,7 @@ func (s *EventStore) SubscribeToPubSub(req *SubscribeRequest, stream EventStore_
 				msg.Ack()
 				break
 			}
+
 			if stream.Context().Err() != nil {
 				// Client has disconnected, exit the handler
 				logger.Infof("Client disconnected: %v", stream.Context().Err())
@@ -515,4 +582,8 @@ func GetLastPublishedPosition(ctx context.Context, js jetstream.JetStream, bound
 	}
 
 	return event.Position, nil
+}
+
+func GetEventNatsMessageId(preparePosition int64, commitPosition int64) string {
+	return fmt.Sprintf("%d-%d", preparePosition, commitPosition)
 }

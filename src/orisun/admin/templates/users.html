@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Orisun User Management</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
@@ -10,13 +11,16 @@
             margin: 0 auto;
             padding: 20px;
         }
+
         .form-group {
             margin-bottom: 15px;
         }
+
         label {
             display: block;
             margin-bottom: 5px;
         }
+
         input[type="text"],
         input[type="password"] {
             width: 100%;
@@ -24,6 +28,7 @@
             border: 1px solid #ddd;
             border-radius: 4px;
         }
+
         button {
             background: #007bff;
             color: white;
@@ -32,44 +37,53 @@
             border-radius: 4px;
             cursor: pointer;
         }
+
         button:hover {
             background: #0056b3;
         }
+
         .error {
             color: red;
             margin-top: 10px;
         }
+
         .success {
             color: green;
             margin-top: 10px;
         }
+
         table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
         }
-        th, td {
+
+        th,
+        td {
             padding: 8px;
             border: 1px solid #ddd;
             text-align: left;
         }
+
         th {
             background-color: #f8f9fa;
         }
+
         .delete-btn {
             background: #dc3545;
         }
+
         .delete-btn:hover {
             background: #c82333;
         }
     </style>
 </head>
+
 <body>
     <h1>Orisun User Management</h1>
-    
-    <form hx-post="/admin/users" 
-          hx-target="#users-container"
-          hx-swap="beforeend">
+
+    <form hx-post="/admin/users" hx-swap="none"
+        hx-on:htmx:after-request="document.querySelector('#users-container').dispatchEvent(new Event('load'))">
         <div class="form-group">
             <label for="username">Username:</label>
             <input type="text" name="username" required>
@@ -96,4 +110,5 @@
         <!-- User list will be loaded here -->
     </div>
 </body>
-</html> 
+
+</html>
