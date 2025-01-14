@@ -5,6 +5,10 @@ db:
   host: ${ORISUN_DB_HOST:localhost}
   port: ${ORISUN_DB_PORT:5432}
   schemas: ${ORISUN_DB_SCHEMAS:public,test}
+
+boundaries:
+  - public:
+  - test:
 grpc:
   port: ${ORISUN_GRPC_PORT:5005}
   enableReflection: ${ORISUN_GRPC_ENABLE_REFLECTION:true}

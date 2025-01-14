@@ -329,9 +329,7 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 					continue
 				}
 
-				// positionMu.Lock()
 				lastPosition = event.Position
-				// positionMu.Unlock()
 
 				if err := msg.Ack(); err != nil {
 					logger.Errorf("Failed to acknowledge message: %v", err)
