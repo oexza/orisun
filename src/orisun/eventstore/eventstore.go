@@ -243,7 +243,6 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 			req.Query,
 			stream,
 			req.Boundary,
-			req.SubscriberName,
 		)
 
 		if historicalErr != nil {
@@ -365,13 +364,9 @@ func ComparePositions(p1, p2 *Position) ComparationResult {
 
 // isEventNewer checks if the new event position is greater than the last processed position
 func isEventNewer(newPosition, lastPosition *Position) bool {
-	if newPosition.CommitPosition > lastPosition.CommitPosition {
-		return true
-	}
-	if newPosition.CommitPosition == lastPosition.CommitPosition {
-		return newPosition.PreparePosition > lastPosition.PreparePosition
-	}
-	return false
+	compResult := ComparePositions(newPosition, lastPosition)
+
+	return compResult == IsGreaterThan
 }
 
 func (s *EventStore) sendHistoricalEvents(
@@ -379,8 +374,7 @@ func (s *EventStore) sendHistoricalEvents(
 	fromPosition *Position,
 	query *Query,
 	stream EventStore_CatchUpSubscribeToEventsServer,
-	boundary string,
-	subscriberName string) (*Position, time.Time, error) {
+	boundary string) (*Position, time.Time, error) {
 
 	lastPosition := fromPosition
 	var lastEventTime time.Time
