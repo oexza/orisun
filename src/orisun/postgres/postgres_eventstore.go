@@ -24,11 +24,11 @@ const (
 )
 
 const insertEventsWithConsistency = `
-SELECT * FROM %s.insert_events_with_consistency($1::jsonb, $2::jsonb)
+SELECT * FROM %s.insert_events_with_consistency($1::jsonb, $2::jsonb, $3::jsonb)
 `
 
 const selectMatchingEvents = `
-SELECT * FROM get_matching_events($1::jsonb, $2, $3)
+SELECT * FROM get_matching_events($1, $2::jsonb, $3::jsonb, $4, $5)
 `
 
 const setSearchPath = `
@@ -53,11 +53,36 @@ func NewPostgresGetEvents(db *sql.DB, logger *logging.Logger) *PostgresGetEvents
 	return &PostgresGetEvents{db: db, logger: *logger}
 }
 
-func (s *PostgresSaveEvents) Save(ctx context.Context, events *[]eventstore.EventWithMapTags, consistencyCondition *eventstore.ConsistencyCondition, boundary string) (transactionID string, globalID int64, err error) {
-	consistencyConditionJSON, err := json.Marshal(getConsistencyConditionAsMap(consistencyCondition))
-	if err != nil {
-		return "", 0, status.Errorf(codes.Internal, "failed to marshal consistency condition: %v", err)
+func (s *PostgresSaveEvents) Save(
+	ctx context.Context,
+	events *[]eventstore.EventWithMapTags,
+	consistencyCondition *eventstore.IndexLockCondition,
+	boundary string,
+	streamName string,
+	expectedVersion uint32,
+	streamConsistencyCondition *eventstore.Query) (transactionID string, globalID uint64, err error) {
+	var streamSubsetQueryJSON *string
+
+	if streamConsistencyCondition != nil && streamConsistencyCondition.Criteria != nil {
+		streamSubsetAsJsonString, err := json.Marshal(getStreamSectionAsMap(streamName, expectedVersion, streamConsistencyCondition))
+		if err != nil {
+			return "", 0, status.Errorf(codes.Internal, "failed to marshal consistency condition: %v", err)
+		}
+		jsonStr := string(streamSubsetAsJsonString)
+		s.logger.Debugf("streamSubsetAsJsonString: %v", jsonStr)
+		streamSubsetQueryJSON = &jsonStr
 	}
+
+	var consistencyConditionJSONString *string = nil
+	if consistencyCondition != nil {
+		consistencyConditionJSON, err := json.Marshal(getConsistencyConditionAsMap(consistencyCondition))
+		if err != nil {
+			return "", 0, status.Errorf(codes.Internal, "failed to marshal consistency condition: %v", err)
+		}
+		jsonStr := string(consistencyConditionJSON)
+		consistencyConditionJSONString = &jsonStr
+	}
+
 	eventsJSON, err := json.Marshal(events)
 	if err != nil {
 		return "", 0, status.Errorf(codes.Internal, "failed to marshal events: %v", err)
@@ -73,8 +98,15 @@ func (s *PostgresSaveEvents) Save(ctx context.Context, events *[]eventstore.Even
 	if err != nil {
 		return "", 0, status.Errorf(codes.Internal, "failed to set search path: %v", err)
 	}
+
 	s.logger.Debugf("insertEventsWithConsistency: %s", fmt.Sprintf(insertEventsWithConsistency, boundary))
-	row := tx.QueryRowContext(ctx, fmt.Sprintf(insertEventsWithConsistency, boundary), string(consistencyConditionJSON), string(eventsJSON))
+	row := tx.QueryRowContext(
+		ctx,
+		fmt.Sprintf(insertEventsWithConsistency, boundary),
+		streamSubsetQueryJSON,
+		consistencyConditionJSONString,
+		string(eventsJSON),
+	)
 
 	if row.Err() != nil {
 		return "", 0, status.Errorf(codes.Internal, "failed to insert events: %v", row.Err())
@@ -85,13 +117,14 @@ func (s *PostgresSaveEvents) Save(ctx context.Context, events *[]eventstore.Even
 	err = error(nil)
 
 	var tranID string
-	var globID int64
+	var globID uint64
 	err = row.Scan(&tranID, &globID, &noop)
 	err = tx.Commit()
 
 	if err != nil {
 		return "", 0, status.Errorf(codes.Internal, "failed to commit transaction: %v", err)
 	}
+
 	if err != nil {
 		if strings.Contains(err.Error(), "OptimisticConcurrencyException") {
 			return "", 0, status.Errorf(codes.AlreadyExists, err.Error())
@@ -104,29 +137,49 @@ func (s *PostgresSaveEvents) Save(ctx context.Context, events *[]eventstore.Even
 }
 
 func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRequest) (*eventstore.GetEventsResponse, error) {
+
+	var fromPosition *map[string]uint64
+
+	if req.LastRetrievedPosition != nil && req.LastRetrievedPosition != (&eventstore.Position{}) {
+		fromPosition = &map[string]uint64{
+			"transaction_id": req.LastRetrievedPosition.CommitPosition,
+			"global_id":      req.LastRetrievedPosition.PreparePosition,
+		}
+	}
+
+	var params *(map[string]interface{})
+
 	var criteriaList []map[string]interface{}
 	if req.Query != nil {
 		criteriaList = getCriteriaAsList(req.Query)
 	}
 
-	fromPosition := map[string]int64{
-		"transaction_id": req.LastRetrievedPosition.CommitPosition,
-		"global_id":      req.LastRetrievedPosition.PreparePosition,
-	}
-
-	params := map[string]interface{}{
-		"last_retrieved_position": fromPosition,
-	}
-
 	if len(criteriaList) > 0 {
-		params["criteria"] = criteriaList
+		params = &map[string]interface{}{
+			"criteria": criteriaList,
+		}
 	}
 
-	paramsJSON, err := json.Marshal(params)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to marshal params: %v", err)
+	var paramsJSON *string = nil
+
+	if params != nil && len(*params) > 0 {
+		var err interface{} = ""
+		paramsString, err := json.Marshal(params)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to marshal params: %v", err)
+		}
+		stringJson := string(paramsString)
+		paramsJSON = &stringJson
 	}
-	s.logger.Debugf("params: %v", string(paramsJSON))
+
+	var streamName *string
+	if req.Stream != nil {
+		streamName = &req.Stream.Stream
+	} else {
+		streamName = nil
+	}
+
+	s.logger.Debugf("params: %v", paramsJSON)
 	s.logger.Debugf("direction: %v", req.Direction.String())
 	s.logger.Debugf("count: %v", req.Count)
 
@@ -140,7 +193,26 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to set search path: %v", err)
 	}
-	rows, err := tx.QueryContext(ctx, selectMatchingEvents, string(paramsJSON), req.Direction.String(), req.Count)
+
+	fromPositionMarshaled, err := json.Marshal(fromPosition)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to marshal from position: %v", err)
+	}
+
+	exec, err := tx.Exec("SET log_statement = 'all';")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to set log_statement: %v", err)
+	}
+	exec.RowsAffected()
+	rows, err := tx.QueryContext(
+		ctx,
+		selectMatchingEvents,
+		streamName,
+		paramsJSON,
+		fromPositionMarshaled,
+		req.Direction.String(),
+		req.Count,
+	)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to execute query: %v", err)
 	}
@@ -152,7 +224,7 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	for rows.Next() {
 		var event eventstore.Event
 		var tagsBytes []byte
-		var transactionID, globalID int64
+		var transactionID, globalID uint64
 		var dateCreated time.Time
 
 		// Create a map of pointers to hold our row data
@@ -165,6 +237,8 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 			"transaction_id": &transactionID,
 			"global_id":      &globalID,
 			"date_created":   &dateCreated,
+			"stream_name":    &event.StreamId,
+			"stream_version": &event.Version,
 		}
 
 		// Get the column names from the result set
@@ -212,8 +286,18 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	return &eventstore.GetEventsResponse{Events: events}, nil
 }
 
-func getConsistencyConditionAsMap(consistencyCondition *eventstore.ConsistencyCondition) map[string]interface{} {
-	lastRetrievedPositions := make(map[string]int64)
+func getStreamSectionAsMap(streamName string, expectedVersion uint32, consistencyCondition *eventstore.Query) map[string]interface{} {
+	lastRetrievedPositions := make(map[string]interface{})
+	lastRetrievedPositions["stream"] = streamName
+	lastRetrievedPositions["expected_version"] = expectedVersion
+
+	lastRetrievedPositions["criteria"] = getCriteriaAsList(consistencyCondition)
+
+	return lastRetrievedPositions
+}
+
+func getConsistencyConditionAsMap(consistencyCondition *eventstore.IndexLockCondition) map[string]interface{} {
+	lastRetrievedPositions := make(map[string]uint64)
 	if consistencyCondition.ConsistencyMarker != nil {
 		lastRetrievedPositions["transaction_id"] = consistencyCondition.ConsistencyMarker.CommitPosition
 		lastRetrievedPositions["global_id"] = consistencyCondition.ConsistencyMarker.PreparePosition
@@ -307,7 +391,10 @@ func PollEventsFromPgToNats(
 				logger.Errorf("Failed to marshal event: %v", err)
 				continue
 			}
-			publishEventWithRetry(ctx, js, eventData, eventstore.GetEventsSubjectName(boundary), logger, event.Position.PreparePosition, event.Position.CommitPosition)
+			publishEventWithRetry(
+				ctx, js, eventData, eventstore.GetEventsSubjectName(boundary),
+				logger, event.Position.PreparePosition, event.Position.CommitPosition,
+			)
 		}
 		if len(resp.Events) > 0 {
 			lastPosition = resp.Events[len(resp.Events)-1].Position
@@ -317,13 +404,15 @@ func PollEventsFromPgToNats(
 }
 
 func publishEventWithRetry(ctx context.Context, js jetstream.JetStream, eventData []byte,
-	subjectName string, logger logging.Logger, preparePosition int64, commitPosition int64) {
+	subjectName string, logger logging.Logger, preparePosition uint64, commitPosition uint64) {
 	backoff := time.Second
 	maxBackoff := time.Minute * 5
 	attempt := 1
 
 	for {
-		pubOpts := jetstream.PublishOpt(jetstream.WithMsgID(eventstore.GetEventNatsMessageId(preparePosition, commitPosition)))
+		pubOpts := jetstream.PublishOpt(
+			jetstream.WithMsgID(eventstore.GetEventNatsMessageId(int64(preparePosition), int64(commitPosition))),
+		)
 		_, err := js.Publish(ctx, subjectName, eventData, pubOpts)
 		if err == nil {
 			logger.Debugf("Successfully published event after %d attempts", attempt)

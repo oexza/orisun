@@ -232,7 +232,7 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 	if err != nil {
 		return err
 	}
-	consistencyCondition := pb.ConsistencyCondition{
+	consistencyCondition := pb.IndexLockCondition{
 		ConsistencyMarker: &pb.Position{
 			PreparePosition: 00,
 			CommitPosition:  00,
@@ -284,7 +284,7 @@ func (s *AdminServer) deleteUser(username string) error {
 	}
 	_, err = s.eventStore.SaveEvents(context.Background(), &pb.SaveEventsRequest{
 		Boundary: s.schema,
-		ConsistencyCondition: &pb.ConsistencyCondition{
+		ConsistencyCondition: &pb.IndexLockCondition{
 			ConsistencyMarker: &pb.Position{
 				PreparePosition: 999999999999999999,
 				CommitPosition:  999999999999999999,

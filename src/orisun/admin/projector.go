@@ -36,7 +36,7 @@ func NewUserProjector(db *sql.DB, logger l.Logger, eventStore pb.EventStoreClien
 func (p *UserProjector) Start(ctx context.Context) error {
 	p.logger.Info("Starting user projector")
 	// Get last checkpoint
-	var commitPos, preparePos int64
+	var commitPos, preparePos uint64
 	err := p.db.QueryRow(
 		fmt.Sprintf("SELECT COALESCE(commit_position, 0), COALESCE(prepare_position, 0) FROM %s.user_projector_checkpoint", p.schema),
 	).Scan(&commitPos, &preparePos)

@@ -21,8 +21,13 @@ import (
 )
 
 type SaveEvents interface {
-	Save(ctx context.Context, events *[]EventWithMapTags,
-		consistencyCondition *ConsistencyCondition, boundary string) (transactionID string, globalID int64, err error)
+	Save(ctx context.Context,
+		events *[]EventWithMapTags,
+		indexLockCondition *IndexLockCondition,
+		boundary string,
+		streamName string,
+		streamVersion uint32,
+		streamSubSet *Query) (transactionID string, globalID uint64, err error)
 }
 
 type GetEvents interface {
@@ -33,11 +38,6 @@ type UnlockFunc func() error
 
 type LockProvider interface {
 	Lock(ctx context.Context, lockName string) (UnlockFunc, error)
-}
-
-type SubscriberPostionManager interface {
-	Save(ctx context.Context, subscriber string, eventstoreContext string, postion *Position) error
-	Get(ctx context.Context, subscriber string, eventstoreContext string) (*Position, error)
 }
 
 type EventStore struct {
@@ -134,9 +134,8 @@ func (s *EventStore) SaveEvents(ctx context.Context, req *SaveEventsRequest) (re
 		}
 	}()
 
-	// Validate the request
-	if req == nil || req.ConsistencyCondition == nil || len(req.Events) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "Invalid request: missing consistency condition or events")
+	if err := validateSaveEventsRequest(req); err != nil {
+		return nil, err
 	}
 
 	eventsForMarshaling := make([]EventWithMapTags, len(req.Events))
@@ -159,18 +158,29 @@ func (s *EventStore) SaveEvents(ctx context.Context, req *SaveEventsRequest) (re
 			Tags:      getTagsAsMap(&event.Tags, event.EventType),
 		}
 	}
+
 	eventsJSON, err := json.Marshal(eventsForMarshaling)
 	if err != nil {
 		logger.Errorf("Error marshaling events: %v", err)
 		return nil, status.Errorf(codes.Internal, "Failed to marshal events")
 	}
+
 	logger.Debugf("eventsJSON: %v", string(eventsJSON))
 
 	var transactionID string
-	var globalID int64
+	var globalID uint64
 
 	// Execute the query
-	transactionID, globalID, err = s.saveEventsFn.Save(ctx, &eventsForMarshaling, req.ConsistencyCondition, req.Boundary)
+	transactionID, globalID, err = s.saveEventsFn.Save(
+		ctx,
+		&eventsForMarshaling,
+		req.ConsistencyCondition,
+		req.Boundary,
+		req.StreamToSaveEventsTo.Stream,
+		req.StreamToSaveEventsTo.ExpectedVersion,
+		req.StreamToSaveEventsTo.Subset,
+	)
+
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to save events: %v", err)
 	}
@@ -410,6 +420,23 @@ func (s *EventStore) sendHistoricalEvents(
 	return lastPosition, lastEventTime, nil
 }
 
+// Add the validation function
+func validateSaveEventsRequest(req *SaveEventsRequest) error {
+	if req == nil {
+		return status.Error(codes.InvalidArgument, "Invalid request: missing request body")
+	}
+
+	if len(req.Events) == 0 {
+		return status.Error(codes.InvalidArgument, "Invalid request: no events provided")
+	}
+
+	if req.StreamToSaveEventsTo == nil {
+		return status.Error(codes.InvalidArgument, "Invalid request: missing stream to save events to")
+	}
+
+	return nil
+}
+
 func (s *EventStore) eventMatchesQueryCriteria(event *Event, criteria *Query) bool {
 	if criteria == nil || len(criteria.Criteria) == 0 {
 		return true
@@ -527,8 +554,8 @@ func (s *EventStore) SubscribeToPubSub(req *SubscribeRequest, stream EventStore_
 	return stream.Context().Err()
 }
 
-func parseInt64(s string) int64 {
-	var i int64
+func parseInt64(s string) uint64 {
+	var i uint64
 	fmt.Sscanf(s, "%d", &i)
 	return i
 }
