@@ -57,14 +57,14 @@ BEGIN
 
     -- Normalize each criterion by sorting the keys and then sort the criteria array
     FOR criterion IN SELECT * FROM jsonb_array_elements(original_criteria)
-        LOOP
+    LOOP
             -- Sort keys within the criterion, with case normalization
-            normalized_criterion := (SELECT jsonb_object_agg(lower(key), lower(value) ORDER BY lower(key), lower(value))
+        normalized_criterion := (SELECT jsonb_object_agg(lower(key), lower(value) ORDER BY lower(key), lower(value))
                                      FROM jsonb_each_text(criterion));
 
-            -- Add normalized criterion to normalized_criteria array
-            normalized_criteria := normalized_criteria || normalized_criterion;
-        END LOOP;
+        -- Add normalized criterion to normalized_criteria array
+        normalized_criteria := normalized_criteria || normalized_criterion;
+    END LOOP;
 
     -- Sort the criteria array
     normalized_criteria := (SELECT jsonb_agg(value ORDER BY value)
