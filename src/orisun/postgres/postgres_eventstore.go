@@ -63,15 +63,13 @@ func (s *PostgresSaveEvents) Save(
 	streamConsistencyCondition *eventstore.Query) (transactionID string, globalID uint64, err error) {
 	var streamSubsetQueryJSON *string
 
-	if streamConsistencyCondition != nil && streamConsistencyCondition.Criteria != nil {
-		streamSubsetAsJsonString, err := json.Marshal(getStreamSectionAsMap(streamName, expectedVersion, streamConsistencyCondition))
-		if err != nil {
-			return "", 0, status.Errorf(codes.Internal, "failed to marshal consistency condition: %v", err)
-		}
-		jsonStr := string(streamSubsetAsJsonString)
-		s.logger.Debugf("streamSubsetAsJsonString: %v", jsonStr)
-		streamSubsetQueryJSON = &jsonStr
+	streamSubsetAsJsonString, err := json.Marshal(getStreamSectionAsMap(streamName, expectedVersion, streamConsistencyCondition))
+	if err != nil {
+		return "", 0, status.Errorf(codes.Internal, "failed to marshal consistency condition: %v", err)
 	}
+	jsonStr := string(streamSubsetAsJsonString)
+	s.logger.Debugf("streamSubsetAsJsonString: %v", jsonStr)
+	streamSubsetQueryJSON = &jsonStr
 
 	var consistencyConditionJSONString *string = nil
 	if consistencyCondition != nil {
@@ -99,7 +97,7 @@ func (s *PostgresSaveEvents) Save(
 		return "", 0, status.Errorf(codes.Internal, "failed to set search path: %v", err)
 	}
 
-	s.logger.Debugf("insertEventsWithConsistency: %s", fmt.Sprintf(insertEventsWithConsistency, boundary))
+	s.logger.Debugf("insertEventsWithConsistency: %s", &streamSubsetQueryJSON)
 	row := tx.QueryRowContext(
 		ctx,
 		fmt.Sprintf(insertEventsWithConsistency, boundary),
@@ -288,10 +286,12 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 
 func getStreamSectionAsMap(streamName string, expectedVersion uint32, consistencyCondition *eventstore.Query) map[string]interface{} {
 	lastRetrievedPositions := make(map[string]interface{})
-	lastRetrievedPositions["stream"] = streamName
+	lastRetrievedPositions["stream_name"] = streamName
 	lastRetrievedPositions["expected_version"] = expectedVersion
 
-	lastRetrievedPositions["criteria"] = getCriteriaAsList(consistencyCondition)
+	if conditions := consistencyCondition; conditions != nil {
+		lastRetrievedPositions["criteria"] = getCriteriaAsList(consistencyCondition)
+	}
 
 	return lastRetrievedPositions
 }

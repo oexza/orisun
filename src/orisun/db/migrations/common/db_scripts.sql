@@ -35,22 +35,20 @@ CREATE OR REPLACE FUNCTION insert_events_with_consistency(
 ) LANGUAGE plpgsql AS $$
 DECLARE
     stream TEXT := stream_info ->> 'stream_name';
-    expected_stream_version BIGINT := (stream_info ->> 'version')::BIGINT;
+    expected_stream_version BIGINT := (stream_info ->> 'expected_version')::BIGINT;
     stream_criteria JSONB := stream_info -> 'criteria';
     
     last_position JSONB := global_condition -> 'last_retrieved_position';
     global_criteria JSONB := global_condition -> 'criteria';
     
     current_tx_id xid8 := pg_current_xact_id();
-    current_stream_version BIGINT;
+    current_stream_version BIGINT := 0;
     conflict_transaction xid8;
     conflict_global_id BIGINT;
     global_keys TEXT[];
     key_record TEXT;
-    events_json_array JSONB[] := jsonb_array_elements(events);
-
 BEGIN
-    IF array_length(events_json_array) = 0 THEN
+    IF jsonb_array_length(events) = 0 THEN
         RAISE EXCEPTION 'Events array cannot be empty';
     END IF;
 
@@ -64,7 +62,7 @@ BEGIN
           SELECT jsonb_array_elements(stream_criteria)
       ));
 
-    IF current_stream_version != expected_stream_version THEN
+    IF current_stream_version <> expected_stream_version THEN
         RAISE EXCEPTION 'OptimisticConcurrencyException:StreamVersionConflict: Expected %, Actual %',
             expected_stream_version, current_stream_version;
     END IF;
@@ -128,10 +126,10 @@ BEGIN
             COALESCE(e->'data', '{}'),
             COALESCE(e->'metadata', '{}'),
             COALESCE(e->'tags', '{}')
-        FROM eventsJsonArray AS e
-        RETURNING stream_version, global_id
+        FROM jsonb_array_elements(events) AS e
+        RETURNING jsonb_array_length(events), global_id
     )
-    SELECT expected_stream_version + array_length(events_json_array), current_tx_id, MAX(global_id)
+    SELECT current_stream_version + jsonb_array_length(events), current_tx_id, MAX(global_id)
     INTO new_stream_version, latest_transaction_id, latest_global_id
     FROM inserted_events;
 
