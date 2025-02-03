@@ -170,7 +170,7 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		paramsJSON = &stringJson
 	}
 
-	var streamName *string
+	var streamName *string = nil
 	if req.Stream != nil {
 		streamName = &req.Stream.Stream
 	} else {

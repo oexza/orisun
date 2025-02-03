@@ -78,7 +78,7 @@ BEGIN
 
     IF global_criteria IS NOT NULL THEN
         -- Extract all unique criteria key-value pairs
-        SELECT ARRAY_AGG(DISTINCT format('%s:%s', key, value))
+        SELECT ARRAY_AGG(DISTINCT format('%s:%s', key_value.key, key_value.value))
         INTO global_keys
         FROM jsonb_array_elements(global_criteria) AS criterion,
             jsonb_each_text(criterion) AS key_value;
@@ -122,7 +122,7 @@ BEGIN
             INTO current_stream_version
         FROM orisun_es_event oe
         WHERE oe.stream_name = stream
-        ORDER BY oe.version DESC
+        ORDER BY oe.stream_version DESC
         LIMIT 1;
     END IF;
 
@@ -191,9 +191,9 @@ BEGIN
         ORDER BY transaction_id %8$s, global_id %8$s
         LIMIT %9$L
         $q$,
-        stream_name IS NOT NULL,
         stream_name,
-        after_position IS NOT NULL,
+        stream_name,
+        after_position,
         op,
         (after_position->>'transaction_id')::text,
         (after_position->>'global_id')::text,
