@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS orisun_es_event (
     transaction_id xid8 NOT NULL,
     global_id BIGINT PRIMARY KEY,
     stream_name TEXT NOT NULL,
+    stream_version BIGINT NOT NULL,
     event_id UUID NOT NULL,
     event_type TEXT NOT NULL CHECK (event_type <> ''),
     data JSONB NOT NULL,
@@ -18,6 +19,7 @@ OWNED BY orisun_es_event.global_id;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_stream ON orisun_es_event (stream_name);
+CREATE INDEX IF NOT EXISTS idx_stream_version ON orisun_es_event (stream_name, stream_version);
 CREATE INDEX IF NOT EXISTS idx_es_event_tags ON orisun_es_event USING GIN (tags jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_global_order ON orisun_es_event (transaction_id, global_id);
 CREATE INDEX IF NOT EXISTS idx_stream_tags ON orisun_es_event 
@@ -54,13 +56,20 @@ BEGIN
 
     PERFORM pg_advisory_xact_lock(hashtext(stream));
 
-    SELECT COUNT(oe.global_id)
+    -- Stream version check
+    SELECT (oe.stream_version)
     INTO current_stream_version
     FROM orisun_es_event oe
     WHERE oe.stream_name = stream
       AND (stream_criteria IS NULL OR tags @> ANY (
           SELECT jsonb_array_elements(stream_criteria)
-      ));
+      ))
+    ORDER BY (transaction_id, global_id) DESC
+    LIMIT 1;
+
+    IF current_stream_version IS NULL THEN
+        current_stream_version := 0;
+    END IF;
 
     IF current_stream_version <> expected_stream_version THEN
         RAISE EXCEPTION 'OptimisticConcurrencyException:StreamVersionConflict: Expected %, Actual %',
@@ -68,12 +77,13 @@ BEGIN
     END IF;
 
     IF global_criteria IS NOT NULL THEN
-        -- Extract all unique criteria keys
-        SELECT ARRAY_AGG(DISTINCT jsonb_object_keys(criterion))
+        -- Extract all unique criteria key-value pairs
+        SELECT ARRAY_AGG(DISTINCT format('%s:%s', key, value))
         INTO global_keys
-        FROM jsonb_array_elements(global_criteria) AS criterion;
+        FROM jsonb_array_elements(global_criteria) AS criterion,
+            jsonb_each_text(criterion) AS key_value;
 
-        -- Lock keys in alphabetical order (deadlock prevention)
+        -- Lock key-value pairs in alphabetical order (deadlock prevention)
         IF global_keys IS NOT NULL THEN
             global_keys := ARRAY(
                 SELECT DISTINCT unnest(global_keys)
@@ -106,9 +116,20 @@ BEGIN
         END IF;
     END IF;
 
+    -- select the frontier of the stream if a subset criteria was specified to ensure the next set of events are properly versioned
+    IF stream_criteria IS NOT NULL THEN
+        SELECT (oe.stream_version)
+            INTO current_stream_version
+        FROM orisun_es_event oe
+        WHERE oe.stream_name = stream
+        ORDER BY oe.version DESC
+        LIMIT 1;
+    END IF;
+
     WITH inserted_events AS (
         INSERT INTO orisun_es_event (
             stream_name,
+            stream_version,
             transaction_id,
             event_id,
             global_id,
@@ -119,6 +140,7 @@ BEGIN
         )
         SELECT
             stream,
+            current_stream_version + ROW_NUMBER() OVER (),
             current_tx_id,
             (e->>'event_id')::UUID,
             nextval('orisun_es_event_global_id_seq'),

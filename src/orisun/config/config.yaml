@@ -15,7 +15,7 @@ grpc:
 nats:
   port: ${ORISUN_NATS_PORT:4222}
   maxPayload: ${ORISUN_NATS_MAX_PAYLOAD:1048576}
-  storeDir: ${ORISUN_NATS_STORE_DIR:../data/orisun-nats-storage}
+  storeDir: ${ORISUN_NATS_STORE_DIR:../data/orisun-nats-jetstream}
   cluster:
     name: ${ORISUN_NATS_CLUSTER_NAME:orisun-nats-cluster}
     host: ${ORISUN_NATS_CLUSTER_HOST:localhost}
