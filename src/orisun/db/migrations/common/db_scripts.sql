@@ -1,165 +1,202 @@
-create table if not exists orisun_es_event (
-    transaction_id xid8 not null,
-    global_id bigint primary key,
-    event_id uuid,
-    event_type varchar(255) not null,
-    data jsonb not null,
-    metadata jsonb,
-    date_created timestamp with time zone default now() not null,
-    tags jsonb not null
+CREATE EXTENSION IF NOT EXISTS btree_gin;
+
+-- Table & Sequence
+CREATE TABLE IF NOT EXISTS orisun_es_event (
+    transaction_id xid8 NOT NULL,
+    global_id BIGINT PRIMARY KEY,
+    stream_name TEXT NOT NULL,
+    stream_version BIGINT NOT NULL,
+    event_id UUID NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type <> ''),
+    data JSONB NOT NULL,
+    metadata JSONB,
+    date_created TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    tags JSONB NOT NULL
 );
-create sequence if not exists orisun_es_event_global_id_seq;
 
-create index if not exists idx_orisun_es_event_date_created on orisun_es_event (date_created);
-create index if not exists idx_orisun_es_event_store_db_global_id on orisun_es_event (global_id);
-create index if not exists idx_transaction_id_global_id on orisun_es_event (transaction_id, global_id);
-create index if not exists idx_tags on orisun_es_event using gin (tags jsonb_path_ops);
+CREATE SEQUENCE IF NOT EXISTS orisun_es_event_global_id_seq 
+OWNED BY orisun_es_event.global_id;
 
--- Function to insert events with consistency checking and deadlock prevention.
--- Ensures that events are inserted only if they meet the specified consistency condition.
--- Uses advisory locks to prevent deadlocks and maintain consistency.
-CREATE OR REPLACE FUNCTION insert_events_with_consistency(consistency_condition jsonb, events jsonb)
-    RETURNS TABLE
-            (
-                latest_transaction_id xid8,
-                latest_global_id      bigint,
-                inserted              boolean
-            )
-    LANGUAGE plpgsql
-AS
-$$
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_stream ON orisun_es_event (stream_name);
+CREATE INDEX IF NOT EXISTS idx_stream_version ON orisun_es_event (stream_name, stream_version);
+CREATE INDEX IF NOT EXISTS idx_es_event_tags ON orisun_es_event USING GIN (tags jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_global_order ON orisun_es_event (transaction_id, global_id);
+CREATE INDEX IF NOT EXISTS idx_stream_version_tags ON orisun_es_event 
+  USING GIN (stream_name, stream_version, tags jsonb_path_ops);
+
+-- Insert Function (With Improved Locking)
+CREATE OR REPLACE FUNCTION insert_events_with_consistency(
+    stream_info JSONB,
+    global_condition JSONB,
+    events JSONB
+) RETURNS TABLE (
+    new_stream_version BIGINT,
+    latest_transaction_id xid8,
+    latest_global_id BIGINT
+) LANGUAGE plpgsql AS $$
 DECLARE
-    last_retrieved_transaction_id xid8;
-    last_retrieved_global_id      bigint;
-    lock_pairs                    JSONB   := '[]'::jsonb;
-    criterion                     JSONB;
-    lock_key                      integer;
-    inserted_row                  boolean := FALSE;
-    normalized_criterion          JSONB;
-    normalized_criteria           JSONB   := '[]'::jsonb;
-    original_criteria             JSONB   := consistency_condition -> 'criteria';
+    stream TEXT := stream_info ->> 'stream_name';
+    expected_stream_version BIGINT := (stream_info ->> 'expected_version')::BIGINT;
+    stream_criteria JSONB := stream_info -> 'criteria';
+    
+    last_position JSONB := global_condition -> 'last_retrieved_position';
+    global_criteria JSONB := global_condition -> 'criteria';
+    
+    current_tx_id xid8 := pg_current_xact_id();
+    current_stream_version BIGINT := 0;
+    conflict_transaction xid8;
+    conflict_global_id BIGINT;
+    global_keys TEXT[];
+    key_record TEXT;
 BEGIN
-    -- Validate input JSON format
-    IF consistency_condition ->> 'last_retrieved_position' IS NULL OR
-       consistency_condition -> 'last_retrieved_position' ->> 'transaction_id' IS NULL OR
-       consistency_condition -> 'last_retrieved_position' ->> 'global_id' IS NULL THEN
-        RAISE EXCEPTION 'Invalid consistency_condition format';
-    END IF;
-
     IF jsonb_array_length(events) = 0 THEN
         RAISE EXCEPTION 'Events array cannot be empty';
     END IF;
 
-    -- Initialize last retrieved position
-    last_retrieved_transaction_id :=
-            ((consistency_condition ->> 'last_retrieved_position')::jsonb ->> 'transaction_id')::xid8;
-    last_retrieved_global_id := ((consistency_condition ->> 'last_retrieved_position')::jsonb ->> 'global_id')::bigint;
+    PERFORM pg_advisory_xact_lock(hashtext(stream));
 
-    -- Normalize each criterion by sorting the keys and then sort the criteria array
-    FOR criterion IN SELECT * FROM jsonb_array_elements(original_criteria)
-    LOOP
-            -- Sort keys within the criterion, with case normalization
-        normalized_criterion := (SELECT jsonb_object_agg(lower(key), lower(value) ORDER BY lower(key), lower(value))
-                                     FROM jsonb_each_text(criterion));
+    -- Stream version check
+    SELECT MAX(oe.stream_version)
+    INTO current_stream_version
+    FROM orisun_es_event oe
+    WHERE oe.stream_name = stream
+      AND (stream_criteria IS NULL OR tags @> ANY (
+          SELECT jsonb_array_elements(stream_criteria)
+      ));
 
-        -- Add normalized criterion to normalized_criteria array
-        normalized_criteria := normalized_criteria || normalized_criterion;
-    END LOOP;
-
-    -- Sort the criteria array
-    normalized_criteria := (SELECT jsonb_agg(value ORDER BY value)
-                            FROM (SELECT jsonb_array_elements(normalized_criteria) AS value) AS sorted_criteria);
-
-    -- Acquire locks for each criterion
-    FOR criterion IN SELECT * FROM jsonb_array_elements(normalized_criteria)
-        LOOP
-            -- Create a consistent lock key by hashing the normalized criterion
-            lock_key := hashtext(criterion::text);
-            PERFORM pg_advisory_xact_lock(lock_key);
-
-            -- Add the criterion to lock_pairs
---             lock_pairs := lock_pairs || jsonb_build_array(criterion);
-        END LOOP;
-
-    -- Retrieve the latest event that fulfills the consistency condition (using original case)
-    SELECT transaction_id, global_id
-    INTO latest_transaction_id, latest_global_id
-    FROM orisun_es_event e
-    WHERE e.tags @> ANY (ARRAY(SELECT jsonb_array_elements(original_criteria)))
-    ORDER BY (transaction_id, global_id) DESC
-    LIMIT 1;
-
-    -- If no violating event is found, insert the new events
-    IF (latest_global_id IS NULL OR
-        (latest_transaction_id, latest_global_id) <= (last_retrieved_transaction_id, last_retrieved_global_id)) THEN
-        -- Insert the events
-        INSERT INTO orisun_es_event (transaction_id, event_type, "data", metadata, tags, event_id, date_created, global_id)
-        SELECT pg_current_xact_id()::xid8,
-               e.event ->> 'event_type',
-               e.event -> 'data',
-               e.event -> 'metadata',
-               e.event -> 'tags',
-               (e.event ->> 'event_id')::uuid,
-               now(),
-               nextval('orisun_es_event_global_id_seq')
-        FROM jsonb_array_elements(events) AS e (event);
-
-        -- Update the last retrieved position
-        latest_transaction_id := pg_current_xact_id();
-        latest_global_id := (SELECT max(global_id) FROM orisun_es_event WHERE transaction_id = latest_transaction_id);
-        inserted_row := TRUE;
-    ELSE
-        -- If a conflicting event is found, raise an exception with details
-        RAISE EXCEPTION 'OptimisticConcurrencyException: Inconsistent event stream. Latest conflicting event: transaction_id = %, global_id = %',
-            latest_transaction_id, latest_global_id;
+    IF current_stream_version IS NULL THEN
+        current_stream_version := 0;
     END IF;
 
-    RETURN QUERY SELECT latest_transaction_id, latest_global_id, inserted_row;
+    IF current_stream_version <> expected_stream_version THEN
+        RAISE EXCEPTION 'OptimisticConcurrencyException:StreamVersionConflict: Expected %, Actual %',
+            expected_stream_version, current_stream_version;
+    END IF;
+
+    IF global_criteria IS NOT NULL THEN
+        -- Extract all unique criteria key-value pairs
+        SELECT ARRAY_AGG(DISTINCT format('%s:%s', key_value.key, key_value.value))
+        INTO global_keys
+        FROM jsonb_array_elements(global_criteria) AS criterion,
+            jsonb_each_text(criterion) AS key_value;
+
+        -- Lock key-value pairs in alphabetical order (deadlock prevention)
+        IF global_keys IS NOT NULL THEN
+            global_keys := ARRAY(
+                SELECT DISTINCT unnest(global_keys)
+                ORDER BY 1  -- Alphabetical sort
+            );
+            
+            FOREACH key_record IN ARRAY global_keys
+            LOOP
+                PERFORM pg_advisory_xact_lock(hashtext(key_record));
+            END LOOP;
+        END IF;
+
+        -- Global position check
+        IF last_position IS NOT NULL THEN
+            SELECT e.transaction_id, e.global_id 
+            INTO conflict_transaction, conflict_global_id
+            FROM orisun_es_event e
+            WHERE (e.transaction_id, e.global_id) > (
+                (last_position->>'transaction_id')::xid8,
+                (last_position->>'global_id')::bigint
+            )
+            AND e.tags @> ANY (SELECT jsonb_array_elements(global_criteria))
+            ORDER BY e.transaction_id DESC, e.global_id DESC
+            LIMIT 1;
+
+            IF FOUND THEN
+                RAISE EXCEPTION 'OptimisticConcurrencyException: Global Conflict: Expected Position %/% but found Position %/%',
+                   (last_position->>'transaction_id'),
+                (last_position->>'global_id'), conflict_transaction, conflict_global_id;
+            END IF;
+        END IF;
+    END IF;
+
+    -- select the frontier of the stream if a subset criteria was specified to ensure the next set of events are properly versioned
+    IF stream_criteria IS NOT NULL THEN
+        SELECT MAX(oe.stream_version)
+            INTO current_stream_version
+        FROM orisun_es_event oe
+        WHERE oe.stream_name = stream;
+    END IF;
+
+    WITH inserted_events AS (
+        INSERT INTO orisun_es_event (
+            stream_name,
+            stream_version,
+            transaction_id,
+            event_id,
+            global_id,
+            event_type,
+            data,
+            metadata,
+            tags
+        )
+        SELECT
+            stream,
+            current_stream_version + ROW_NUMBER() OVER (),
+            current_tx_id,
+            (e->>'event_id')::UUID,
+            nextval('orisun_es_event_global_id_seq'),
+            e->>'event_type',
+            COALESCE(e->'data', '{}'),
+            COALESCE(e->'metadata', '{}'),
+            COALESCE(e->'tags', '{}')
+        FROM jsonb_array_elements(events) AS e
+        RETURNING jsonb_array_length(events), global_id
+    )
+    SELECT current_stream_version + jsonb_array_length(events), current_tx_id, MAX(global_id)
+    INTO new_stream_version, latest_transaction_id, latest_global_id
+    FROM inserted_events;
+
+    RETURN QUERY SELECT new_stream_version, latest_transaction_id, latest_global_id;
 END;
 $$;
 
+-- Query Function
 CREATE OR REPLACE FUNCTION get_matching_events(
+    stream_name TEXT DEFAULT NULL,
     criteria JSONB DEFAULT NULL,
-    sort_order text DEFAULT 'ASC',
-    i_limit integer DEFAULT NULL
-)
-    RETURNS TABLE
-            (
-                transaction_id xid8,
-                global_id      bigint,
-                event_type     text,
-                data           JSONB,
-                tags           JSONB,
-                event_id       uuid,
-                date_created   timestamptz,
-                metadata       jsonb
-            )
-AS
-$$
+    after_position JSONB DEFAULT NULL,
+    sort_dir TEXT DEFAULT 'ASC',
+    max_count INT DEFAULT 1000
+) RETURNS SETOF orisun_es_event 
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    op TEXT := CASE WHEN sort_dir = 'ASC' THEN '>' ELSE '<' END;
 BEGIN
-    -- Validate sort order
-    IF sort_order NOT IN ('ASC', 'DESC') THEN
-        RAISE LOG 'Invalid sort order. Must be either ''ASC'' or ''DESC''.';
+    IF sort_dir NOT IN ('ASC','DESC') THEN
+        RAISE EXCEPTION 'Invalid sort direction: "%"', sort_dir;
     END IF;
 
-    RETURN QUERY EXECUTE
-        'SELECT transaction_id, global_id, event_type::text, data, tags, event_id, date_created, metadata
-         FROM orisun_es_event e
-         WHERE ($1->''last_retrieved_position'' IS NULL OR (
-             CASE
-                 WHEN $2 = ''ASC'' THEN (transaction_id, global_id) > (($1->''last_retrieved_position''->>''transaction_id'')::xid8, ($1->''last_retrieved_position''->>''global_id'')::bigint)
-                 ELSE (transaction_id, global_id) < (($1->''last_retrieved_position''->>''transaction_id'')::xid8, ($1->''last_retrieved_position''->>''global_id'')::bigint)
-             END
-         ))
-         AND ($1->''criteria'' IS NULL OR e.tags @> ANY (SELECT jsonb_path_query($1, ''$.criteria[*]'')))
-         AND TRANSACTION_ID < pg_snapshot_xmin(pg_current_snapshot())
-         ORDER BY transaction_id ' || sort_order || ', global_id ' || sort_order ||
-        CASE
-            WHEN $3 IS NOT NULL THEN
-                ' LIMIT $3'
-            ELSE
-                ''
-            END
-        USING criteria, sort_order, i_limit;
+    RETURN QUERY EXECUTE format(
+        $q$
+        SELECT * FROM orisun_es_event
+        WHERE 
+            (%1$L IS NULL OR stream_name = %2$L) AND
+            (%3$L IS NULL OR 
+             (transaction_id, global_id) %4$s (
+                %5$L::xid8, 
+                %6$L::BIGINT
+             )) AND
+            (%7$L::JSONB IS NULL OR tags @> ANY (
+                SELECT jsonb_array_elements(%7$L)
+            ))
+        ORDER BY transaction_id %8$s, global_id %8$s
+        LIMIT %9$L
+        $q$,
+        stream_name,
+        stream_name,
+        after_position,
+        op,
+        (after_position->>'transaction_id')::text,
+        (after_position->>'global_id')::text,
+        criteria,
+        sort_dir,
+        LEAST(GREATEST(max_count, 1), 10000)
+    );
 END;
-$$ LANGUAGE plpgsql;
+$$;

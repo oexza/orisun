@@ -8,8 +8,8 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
 
 message Position {
-  string commit_position = 1;
-  string prepare_position = 2;
+  uint64 commit_position = 1;
+  uint64 prepare_position = 2;
 }
 
 message Tag {
@@ -23,11 +23,6 @@ message Criterion {
 
 message Query {
   repeated Criterion criteria = 1;
-}
-
-message ConsistencyCondition {
-  Position consistency_marker = 1;
-  Query query = 2;
 }
 
 message EventToSave {
@@ -45,7 +40,9 @@ message Event {
   string metadata = 4;
   repeated Tag tags = 5;
   Position position = 6;
-  google.protobuf.Timestamp date_created = 10;
+  google.protobuf.Timestamp date_created = 7;
+  string stream_id = 8;
+  string version = 9;
 }
 
 message WriteResult {
@@ -57,10 +54,22 @@ enum Direction {
   DESC = 1;
 }
 
+message IndexLockCondition {
+  Position consistency_marker = 1;
+  Query query = 2;
+}
+
+message StreamQuery{
+  string stream = 1;
+  uint32 expected_version = 2;
+  Query subset = 3;
+}
+
 message SaveEventsRequest {
-  ConsistencyCondition consistency_condition = 1;
+  IndexLockCondition consistency_condition = 1;
   string boundary = 2;
-  repeated EventToSave events = 3;
+  StreamQuery stream_to_save_events_to = 3;
+  repeated EventToSave events = 4;
 }
 
 message GetEventsRequest {
@@ -69,6 +78,7 @@ message GetEventsRequest {
   int32 count = 3;
   Direction direction = 4;
   string boundary = 5;
+  StreamQuery stream = 6;
 }
 
 message GetEventsResponse {
