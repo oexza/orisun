@@ -328,9 +328,7 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 				continue
 			}
 
-			// positionMu.RLock()
 			isNewer := isEventNewer(event.Position, lastPosition)
-			// positionMu.RUnlock()
 
 			if isNewer && s.eventMatchesQueryCriteria(&event, req.Query) {
 				if err := stream.Send(&event); err != nil {

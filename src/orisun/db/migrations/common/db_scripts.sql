@@ -22,8 +22,8 @@ CREATE INDEX IF NOT EXISTS idx_stream ON orisun_es_event (stream_name);
 CREATE INDEX IF NOT EXISTS idx_stream_version ON orisun_es_event (stream_name, stream_version);
 CREATE INDEX IF NOT EXISTS idx_es_event_tags ON orisun_es_event USING GIN (tags jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_global_order ON orisun_es_event (transaction_id, global_id);
-CREATE INDEX IF NOT EXISTS idx_stream_tags ON orisun_es_event 
-  USING GIN (stream_name, tags jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_stream_version_tags ON orisun_es_event 
+  USING GIN (stream_name, stream_version, tags jsonb_path_ops);
 
 -- Insert Function (With Improved Locking)
 CREATE OR REPLACE FUNCTION insert_events_with_consistency(
@@ -57,15 +57,13 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtext(stream));
 
     -- Stream version check
-    SELECT (oe.stream_version)
+    SELECT MAX(oe.stream_version)
     INTO current_stream_version
     FROM orisun_es_event oe
     WHERE oe.stream_name = stream
       AND (stream_criteria IS NULL OR tags @> ANY (
           SELECT jsonb_array_elements(stream_criteria)
-      ))
-    ORDER BY (transaction_id, global_id) DESC
-    LIMIT 1;
+      ));
 
     IF current_stream_version IS NULL THEN
         current_stream_version := 0;
@@ -110,20 +108,19 @@ BEGIN
             LIMIT 1;
 
             IF FOUND THEN
-                RAISE EXCEPTION 'OptimisticConcurrencyException: Global Conflict: Position %/%',
-                    conflict_transaction, conflict_global_id;
+                RAISE EXCEPTION 'OptimisticConcurrencyException: Global Conflict: Expected Position %/% but found Position %/%',
+                   (last_position->>'transaction_id'),
+                (last_position->>'global_id'), conflict_transaction, conflict_global_id;
             END IF;
         END IF;
     END IF;
 
     -- select the frontier of the stream if a subset criteria was specified to ensure the next set of events are properly versioned
     IF stream_criteria IS NOT NULL THEN
-        SELECT (oe.stream_version)
+        SELECT MAX(oe.stream_version)
             INTO current_stream_version
         FROM orisun_es_event oe
-        WHERE oe.stream_name = stream
-        ORDER BY oe.stream_version DESC
-        LIMIT 1;
+        WHERE oe.stream_name = stream;
     END IF;
 
     WITH inserted_events AS (
