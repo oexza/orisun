@@ -172,7 +172,7 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 
 	var streamName *string = nil
 	if req.Stream != nil {
-		streamName = &req.Stream.Stream
+		streamName = &req.Stream.Name
 	} else {
 		streamName = nil
 	}

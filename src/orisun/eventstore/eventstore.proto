@@ -59,17 +59,24 @@ message IndexLockCondition {
   Query query = 2;
 }
 
-message StreamQuery{
-  string stream = 1;
+message SaveStreamQuery{
+  string name = 1;
   uint32 expected_version = 2;
-  Query subset = 3;
+  Query subsetQuery = 3;
 }
 
 message SaveEventsRequest {
   IndexLockCondition consistency_condition = 1;
   string boundary = 2;
-  StreamQuery stream_to_save_events_to = 3;
+  SaveStreamQuery
+ stream = 3;
   repeated EventToSave events = 4;
+}
+
+message GetStreamQuery{
+  string name = 1;
+  uint32 from_version = 2;
+  Query subsetQuery = 3;
 }
 
 message GetEventsRequest {
@@ -78,7 +85,7 @@ message GetEventsRequest {
   int32 count = 3;
   Direction direction = 4;
   string boundary = 5;
-  StreamQuery stream = 6;
+  SaveStreamQuery stream = 6;
 }
 
 message GetEventsResponse {

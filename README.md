@@ -94,67 +94,80 @@ orisun-darwin-arm64
 ## gRPC API Examples
 
 ### SaveEvents
-Save events to a specific schema/boundary:
+Save events to a specific schema/boundary. Here's an example of saving user registration events:
 
 ```bash
 grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents
 {
-  "events": [
-    {
-      "event_id": "evt-123",
-      "event_type": "UserCreated",
-      "tags": [
-        {"key": "aggregate_id", "value": "user-123"},
-        {"key": "version", "value": "1"},
-        {"key": "tenant_id", "value": "tenant-456"}
-      ],
-      "data": "{\"username\": \"john_doe\", \"email\": \"john@example.com\"}",
-      "metadata": "{\"source\": \"user_service\", \"correlation_id\": \"corr-789\"}",
-      "stream_id": "user-123",
-      "version": 1
-    }
-  ],
-  "boundary": "users",
   "consistency_condition": {
+    "consistency_marker": {
+      "commit_position": "13951879",
+      "prepare_position": "61"
+    },
     "query": {
       "criteria": [
         {
           "tags": [
-            {"key": "tenant_id", "value": "tenant-456"},
-            {"key": "aggregate_id", "value": "user-123"}
+            {"key": "tenant_id", "value": "tenant-456"}
           ]
         }
       ]
-    },
-    "consistency_marker": {
-      "commit_position": "1000",
-      "prepare_position": "999"
     }
+  },
+  "boundary": "users",
+  "events": [
+    {
+      "event_id": "0191b93c-5f3c-75c8-92ce-5a3300709178",
+      "event_type": "UserRegistered",
+      "tags": [
+        {"key": "tenant_id", "value": "tenant-456"},
+        {"key": "source", "value": "web_signup"}
+      ],
+      "data": "{\"email\": \"john.doe@example.com\", \"username\": \"johndoe\", \"full_name\": \"John Doe\"}",
+      "metadata": "{\"source\": \"web_signup\", \"ip_address\": \"192.168.1.1\"}"
+    },
+    {
+      "event_id": "0191b93c-5f3c-75c8-92ce-5a3300709179",
+      "event_type": "UserProfileCompleted",
+      "tags": [
+        {"key": "tenant_id", "value": "tenant-456"}
+      ],
+      "data": "{\"phone\": \"+1234567890\", \"address\": \"123 Main St, City, Country\"}",
+      "metadata": "{\"completed_at\": \"2024-01-20T15:30:00Z\"}"
+    }
+  ],
+  "stream": {
+    "expected_version": 0,
+    "name": "user-1234"
   }
 }
 ```
 
 ### GetEvents
-Query events with various criteria:
+Query events with various criteria. Here's an example of retrieving order events:
 
 ```bash
 grpcurl -d @ localhost:50051 eventstore.EventStore/GetEvents <<
 {
-  "boundary": "users",
+  "boundary": "orders",
   "stream": {
-    "stream": "user-123"
+    "name": "order-789"
   },
   "query": {
     "criteria": [
       {
         "tags": [
-          {"key": "tenant_id", "value": "tenant-456"},
-          {"key": "event_type", "value": "UserCreated"}
+          {"key": "event_type", "value": "OrderCreated"}
         ]
       },
       {
         "tags": [
-          {"key": "event_type", "value": "UserUpdated"}
+          {"key": "event_type", "value": "PaymentProcessed"}
+        ]
+      },
+      {
+        "tags": [
+          {"key": "event_type", "value": "OrderShipped"}
         ]
       }
     ]
@@ -169,25 +182,28 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/GetEvents <<
 ```
 
 ### SubscribeToEvents
-Subscribe to events with complex filtering:
+Subscribe to events with complex filtering. Here's an example of monitoring payment events:
 
 ```bash
 grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<EOF
 {
-  "subscriber_name": "user-activity-monitor",
-  "boundary": "users",
+  "subscriber_name": "payment-processor",
+  "boundary": "payments",
   "query": {
     "criteria": [
       {
         "tags": [
-          {"key": "tenant_id", "value": "tenant-456"},
-          {"key": "event_type", "value": "UserCreated"}
+          {"key": "event_type", "value": "PaymentInitiated"}
         ]
       },
       {
         "tags": [
-          {"key": "tenant_id", "value": "tenant-456"},
-          {"key": "event_type", "value": "UserDeleted"}
+          {"key": "event_type", "value": "PaymentAuthorized"}
+        ]
+      },
+      {
+        "tags": [
+          {"key": "event_type", "value": "PaymentFailed"}
         ]
       }
     ]
@@ -196,25 +212,25 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<EOF
 ```
 
 ### PublishToPubSub
-Publish a message to a pub/sub topic:
+Publish a message to a pub/sub topic. Here's an example of publishing order notifications:
 
 ```bash
 grpcurl -d @ localhost:50051 eventstore.EventStore/PublishToPubSub <<
 {
-  "subject": "notifications",
-  "data": "{\"message\": \"Hello World\"}",
-  "metadata": "{\"priority\": \"high\"}"
+  "subject": "order.notifications",
+  "data": "{\"order_id\": \"order-789\", \"status\": \"shipped\", \"customer_email\": \"john.doe@example.com\"}",
+  "metadata": "{\"priority\": \"high\", \"notification_type\": \"shipping_update\"}"
 }
 ```
 
 ### SubscribeToPubSub
-Subscribe to messages from a pub/sub topic:
+Subscribe to messages from a pub/sub topic. Here's an example of processing inventory updates:
 
 ```bash
 grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToPubSub <<
 {
-  "subject": "notifications",
-  "consumer_name": "notification-processor"
+  "subject": "inventory.updates",
+  "consumer_name": "inventory-processor"
 }
 ```
 

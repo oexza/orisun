@@ -176,9 +176,9 @@ func (s *EventStore) SaveEvents(ctx context.Context, req *SaveEventsRequest) (re
 		&eventsForMarshaling,
 		req.ConsistencyCondition,
 		req.Boundary,
-		req.StreamToSaveEventsTo.Stream,
-		req.StreamToSaveEventsTo.ExpectedVersion,
-		req.StreamToSaveEventsTo.Subset,
+		req.Stream.Name,
+		req.Stream.ExpectedVersion,
+		req.Stream.SubsetQuery,
 	)
 
 	if err != nil {
@@ -428,7 +428,7 @@ func validateSaveEventsRequest(req *SaveEventsRequest) error {
 		return status.Error(codes.InvalidArgument, "Invalid request: no events provided")
 	}
 
-	if req.StreamToSaveEventsTo == nil {
+	if req.Stream == nil {
 		return status.Error(codes.InvalidArgument, "Invalid request: missing stream to save events to")
 	}
 
