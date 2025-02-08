@@ -71,7 +71,7 @@ func NewEventStoreServer(
 	saveEventsFn SaveEvents,
 	getEventsFn GetEvents,
 	lockProvider LockProvider,
-	boundaries []string) *EventStore {
+	boundaries *[]string) *EventStore {
 	log, err := logging.GlobalLogger()
 
 	if err != nil {
@@ -79,7 +79,7 @@ func NewEventStoreServer(
 	}
 
 	logger = log
-	for _, boundary := range boundaries {
+	for _, boundary := range *boundaries {
 		streamName := GetEventsStreamName(boundary)
 		info, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 			Name: streamName,

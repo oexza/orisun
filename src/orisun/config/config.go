@@ -13,8 +13,9 @@ import (
 
 // AppConfig represents the application configuration
 type AppConfig struct {
-	DB   DBConfig
-	Grpc struct {
+	Postgres   DBConfig
+	Boundaries []Boundary
+	Grpc       struct {
 		Port             string
 		EnableReflection bool
 	}
@@ -38,8 +39,8 @@ type AppConfig struct {
 		AdminPassword string
 	}
 	Admin struct {
-		Port    string
-		Schema  string
+		Port   string
+		Schema string
 	}
 }
 
@@ -52,7 +53,12 @@ type DBConfig struct {
 	Schemas  string
 }
 
-func (c *DBConfig) GetSchemas() []string {
+type Boundary struct {
+	Name        string
+	Description string
+}
+
+func (c *DBConfig) GetPostgresSchemas() []string {
 	return strings.Split(c.Schemas, ",")
 }
 

@@ -197,11 +197,11 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		return nil, status.Errorf(codes.Internal, "failed to marshal from position: %v", err)
 	}
 
-	exec, err := tx.Exec("SET log_statement = 'all';")
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to set log_statement: %v", err)
-	}
-	exec.RowsAffected()
+	// exec, err := tx.Exec("SET log_statement = 'all';")
+	// if err != nil {
+	// 	return nil, status.Errorf(codes.Internal, "failed to set log_statement: %v", err)
+	// }
+	// exec.RowsAffected()
 	rows, err := tx.QueryContext(
 		ctx,
 		selectMatchingEvents,
@@ -349,7 +349,7 @@ func PollEventsFromPgToNats(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-
+		
 		hash := sha256.Sum256([]byte(boundary))
 		lockID := int64(binary.BigEndian.Uint64(hash[:]))
 

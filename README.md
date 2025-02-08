@@ -1,16 +1,15 @@
 # Orisun - A Batteries Included Event Store
 
 ## Description
-Orisun is a truly batteries-included event sourcing solution with an embedded NATS JetStream server and PostgreSQL support. It provides a reliable, scalable event store with built-in pub/sub capabilities, making it ideal for event-driven architectures and CQRS applications.
+Orisun is a batteries-included event store, with an embedded NATS JetStream server and PostgreSQL support. It provides a reliable, scalable event store with built-in pub/sub capabilities, making it ideal for event-driven architectures and CQRS applications.
 
 ### Key Features
 - **Embedded NATS JetStream**: No separate NATS installation required
 - **Auto Database Setup**: Automatically creates and manages its schema
-- **Dynamic Consistency Boundaries (DCB)**: Unlike traditional event stores that use streams as consistency boundaries
+- **Stream-based Event Sourcing**: Traditional stream-based event sourcing with optimistic concurrency
 - **Global Ordering**: Built-in global ordering guarantee for events
-- **Optimistic Concurrency**: Prevents conflicts while allowing parallel event processing
+- **Dynamic Consistency Boundaries**: Lock across multiple streams using tag-based queries
 - **Real-time Event Streaming**: Subscribe to event changes in real-time
-- **Load Balanced Pub/Sub**: Distribute messages across multiple consumers
 - **Flexible Event Querying**: Query events by various criteria including custom tags
 - **High Performance**: Efficient PostgreSQL-based storage with embedded NATS JetStream for streaming
 
@@ -24,21 +23,21 @@ Orisun is a truly batteries-included event sourcing solution with an embedded NA
 2. Run the binary with environment variables:
 ```bash
 # Minimal configuration
-ORISUN_DB_HOST=localhost \
-ORISUN_DB_PORT=5432 \
-ORISUN_DB_USER=postgres \
-ORISUN_DB_PASSWORD=your_password \
-ORISUN_DB_NAME=your_database \
-ORISUN_DB_SCHEMAS=your_schema \
+ORISUN_PG_HOST=localhost \
+ORISUN_PG_PORT=5432 \
+ORISUN_PG_USER=postgres \
+ORISUN_PG_PASSWORD=your_password \
+ORISUN_PG_NAME=your_database \
+ORISUN_PG_SCHEMAS=your_schema \
 orisun-[platform]-[arch]
 
 # Example with all options
-ORISUN_DB_HOST=localhost \
-ORISUN_DB_PORT=5432 \
-ORISUN_DB_USER=postgres \
-ORISUN_DB_PASSWORD=your_password \
-ORISUN_DB_NAME=your_database \
-ORISUN_DB_SCHEMAS=your_schema \
+ORISUN_PG_HOST=localhost \
+ORISUN_PG_PORT=5432 \
+ORISUN_PG_USER=postgres \
+ORISUN_PG_PASSWORD=your_password \
+ORISUN_PG_NAME=your_database \
+ORISUN_PG_SCHEMAS=your_schema \
 ORISUN_GRPC_PORT=50051 \
 ORISUN_NATS_PORT=4222 \
 ORISUN_NATS_STORE_DIR=/var/opt/nats \
@@ -58,8 +57,8 @@ In Orisun, a "boundary" directly corresponds to a PostgreSQL schema. Boundaries 
 
 ```bash
 # Configure allowed boundaries (schemas)
-ORISUN_DB_SCHEMAS=users,orders,payments \
-ORISUN_DB_HOST=localhost \
+ORISUN_PG_SCHEMAS=users,orders,payments \
+ORISUN_PG_HOST=localhost \
 [... other config ...] \
 orisun-darwin-arm64
 ```
@@ -79,15 +78,15 @@ For example:
   - ❌ `boundary: "payments"` - Request will fail (schema not configured)
 
 This boundary pre-configuration ensures:
-- Security through explicit schema allowlisting
+- Security through explicit schema allow listing
 - Clear separation of domains
 - Controlled resource allocation
 
 ### Environment Setup
 ```bash
 # Multiple schemas can be pre-configured
-ORISUN_DB_SCHEMAS=users,orders,payments \
-ORISUN_DB_HOST=localhost \
+ORISUN_PG_SCHEMAS=users,orders,payments \
+ORISUN_PG_HOST=localhost \
 [... other config ...] \
 orisun-darwin-arm64
 ```
@@ -106,30 +105,56 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents
       "event_type": "UserCreated",
       "tags": [
         {"key": "aggregate_id", "value": "user-123"},
-        {"key": "version", "value": "1"}
+        {"key": "version", "value": "1"},
+        {"key": "tenant_id", "value": "tenant-456"}
       ],
-      "data": "{\"username\": \"john_doe\"}",
-      "metadata": "{\"source\": \"user_service\"}"
+      "data": "{\"username\": \"john_doe\", \"email\": \"john@example.com\"}",
+      "metadata": "{\"source\": \"user_service\", \"correlation_id\": \"corr-789\"}",
+      "stream_id": "user-123",
+      "version": 1
     }
   ],
-  "boundary": "users",  // This will use the "users" PostgreSQL schema
+  "boundary": "users",
   "consistency_condition": {
-    // ... consistency conditions ...
+    "query": {
+      "criteria": [
+        {
+          "tags": [
+            {"key": "tenant_id", "value": "tenant-456"},
+            {"key": "aggregate_id", "value": "user-123"}
+          ]
+        }
+      ]
+    },
+    "consistency_marker": {
+      "commit_position": "1000",
+      "prepare_position": "999"
+    }
   }
 }
 ```
 
 ### GetEvents
-Query events with criteria:
+Query events with various criteria:
 
 ```bash
 grpcurl -d @ localhost:50051 eventstore.EventStore/GetEvents <<
 {
-  "criteria": {
+  "boundary": "users",
+  "stream": {
+    "stream": "user-123"
+  },
+  "query": {
     "criteria": [
       {
         "tags": [
-          {"key": "aggregate_id", "value": "user-123"}
+          {"key": "tenant_id", "value": "tenant-456"},
+          {"key": "event_type", "value": "UserCreated"}
+        ]
+      },
+      {
+        "tags": [
+          {"key": "event_type", "value": "UserUpdated"}
         ]
       }
     ]
@@ -137,25 +162,32 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/GetEvents <<
   "count": 100,
   "direction": "ASC",
   "last_retrieved_position": {
-    "commit_position": "0",
-    "prepare_position": "0"
+    "commit_position": "1000",
+    "prepare_position": "999"
   }
 }
 ```
 
 ### SubscribeToEvents
-Subscribe to events from a specific schema/boundary:
+Subscribe to events with complex filtering:
 
 ```bash
 grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToEvents <<EOF
 {
-  "subscriber_name": "my-subscriber",
-  "boundary": "users",  // This will subscribe to events in the "users" schema
-  "criteria": {
+  "subscriber_name": "user-activity-monitor",
+  "boundary": "users",
+  "query": {
     "criteria": [
       {
         "tags": [
-          {"key": "aggregate_id", "value": "user-123"}
+          {"key": "tenant_id", "value": "tenant-456"},
+          {"key": "event_type", "value": "UserCreated"}
+        ]
+      },
+      {
+        "tags": [
+          {"key": "tenant_id", "value": "tenant-456"},
+          {"key": "event_type", "value": "UserDeleted"}
         ]
       }
     ]
@@ -244,14 +276,16 @@ cd orisun
 
 3. Run the built binary:
 ```bash
-ORISUN_DB_HOST=localhost \
-ORISUN_DB_PORT=5432 \
-ORISUN_DB_USER=postgres \
-ORISUN_DB_PASSWORD=your_password \
-ORISUN_DB_NAME=your_database \
-ORISUN_DB_SCHEMAS=your_schema \
-./orisun
-```
+# Using environment variables
+ORISUN_PG_HOST=localhost \
+ORISUN_PG_PORT=5432 \
+ORISUN_PG_USER=postgres \
+ORISUN_PG_PASSWORD=your_password \
+ORISUN_PG_NAME=your_database \
+ORISUN_PG_SCHEMAS=public \
+ORISUN_GRPC_PORT=5005 \
+ORISUN_NATS_PORT=4222 \
+./orisun-darwin-arm64
 
 ## Usage
 

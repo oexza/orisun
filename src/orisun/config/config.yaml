@@ -1,14 +1,17 @@
-db:
-  user: ${ORISUN_DB_USER:postgres}
-  name: ${ORISUN_DB_NAME:orisun}
-  password: ${ORISUN_DB_PASSWORD:password@1}
-  host: ${ORISUN_DB_HOST:localhost}
-  port: ${ORISUN_DB_PORT:5432}
-  schemas: ${ORISUN_DB_SCHEMAS:public,test}
+postgres:
+  user: ${ORISUN_PG_USER:postgres}
+  name: ${ORISUN_PG_NAME:orisun}
+  password: ${ORISUN_PG_PASSWORD:password@1}
+  host: ${ORISUN_PG_HOST:localhost}
+  port: ${ORISUN_PG_PORT:5432}
+  schemas: ${ORISUN_PG_SCHEMAS:public,test}
 
 boundaries:
-  - public:
-  - test:
+  - name: public
+    description: boundary1
+  - name: test
+    description: boundary2
+  
 grpc:
   port: ${ORISUN_GRPC_PORT:5005}
   enableReflection: ${ORISUN_GRPC_ENABLE_REFLECTION:true}

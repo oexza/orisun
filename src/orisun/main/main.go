@@ -106,7 +106,7 @@ func main() {
 
 	// Connect to PostgreSQL
 	db, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		config.DB.Host, config.DB.Port, config.DB.User, config.DB.Password, config.DB.Name,
+		config.Postgres.Host, config.Postgres.Port, config.Postgres.User, config.Postgres.Password, config.Postgres.Name,
 	))
 	if err != nil {
 		AppLogger.Fatalf("Failed to connect to database: %v", err)
@@ -117,9 +117,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Run database migrations
-	for _, schema := range config.DB.GetSchemas() {
-		isAdminSchema := schema == config.Admin.Schema
-		if err := dbase.RunDbScripts(db, schema, isAdminSchema, ctx); err != nil {
+	for _, schema := range config.Boundaries {
+		isAdminSchema := schema.Name == config.Admin.Schema
+		if err := dbase.RunDbScripts(db, schema.Name, isAdminSchema, ctx); err != nil {
 			AppLogger.Fatalf("Failed to run database migrations for schema %s: %v", schema, err)
 		}
 		AppLogger.Info("Database migrations for schema %s completed successfully", schema)
@@ -184,13 +184,13 @@ func main() {
 		&pgLockProvider{
 			db: db,
 		},
-		config.DB.GetSchemas(),
+		getBoundaryNames(&config.Boundaries),
 	)
 
 	defer cancel()
 
 	//poll events from Postgres to NATS
-	for _, schema := range config.DB.GetSchemas() {
+	for _, schema := range config.Postgres.GetPostgresSchemas() {
 		// Get last published position
 		lastPosition, err := pb.GetLastPublishedPosition(ctx, js, schema)
 		if err != nil {
@@ -279,6 +279,14 @@ func main() {
 	if err := grpcServer.Serve(lis); err != nil {
 		AppLogger.Fatalf("Failed to serve: %v", err)
 	}
+}
+
+func getBoundaryNames(boundary *[]c.Boundary) *[]string {
+	var names []string
+	for _, boundary := range *boundary {
+		names = append(names, boundary.Name)
+	}
+	return &names
 }
 
 func streamErrorInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
