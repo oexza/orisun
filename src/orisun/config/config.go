@@ -14,7 +14,7 @@ import (
 // AppConfig represents the application configuration
 type AppConfig struct {
 	Postgres   DBConfig
-	Boundaries []Boundary
+	Boundaries []Boundary `mapstructure:"boundaries"`
 	Grpc       struct {
 		Port             string
 		EnableReflection bool
@@ -81,26 +81,29 @@ func (c *NatsClusterConfig) GetRoutes() []string {
 var configData []byte
 
 func LoadConfig() (*AppConfig, error) {
-	viper.SetConfigType("yaml") // Set the type of the config file
+    viper.SetConfigType("yaml")
 
-	// Read from the embedded config data
-	if err := viper.ReadConfig(bytes.NewReader(configData)); err != nil {
-		return nil, fmt.Errorf("failed to read config data: %w", err)
-	}
+    if err := viper.ReadConfig(bytes.NewReader(configData)); err != nil {
+        return nil, fmt.Errorf("failed to read config data: %w", err)
+    }
 
-	// Custom environment variable substitution
-	for _, key := range viper.AllKeys() {
-		value := viper.GetString(key)
-		viper.Set(key, substituteEnvVars(value))
-	}
+    // Correct environment variable substitution
+    for _, key := range viper.AllKeys() {
+        value := viper.Get(key)
+        if s, ok := value.(string); ok {
+            substituted := substituteEnvVars(s)
+            viper.Set(key, substituted)
+        }
+    }
 
-	var config AppConfig
-	err := viper.Unmarshal(&config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-	}
+    var config AppConfig
 
-	return &config, nil
+    if err := viper.Unmarshal(&config); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+    }
+
+    fmt.Printf("config is %+v\n", config)
+    return &config, nil
 }
 
 func substituteEnvVars(value string) string {

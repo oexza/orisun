@@ -189,7 +189,7 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 		Boundary:  s.schema,
 		Direction: pb.Direction_DESC,
 		Count:     1,
-		LastRetrievedPosition: &pb.Position{
+		FromPosition: &pb.Position{
 			PreparePosition: 999999999999999999,
 			CommitPosition:  999999999999999999,
 		},

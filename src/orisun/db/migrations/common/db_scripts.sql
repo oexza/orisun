@@ -194,7 +194,7 @@ BEGIN
         op,
         (after_position->>'transaction_id')::text,
         (after_position->>'global_id')::text,
-        criteria,
+        (criteria-> 'criteria'),
         sort_dir,
         LEAST(GREATEST(max_count, 1), 10000)
     );

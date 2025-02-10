@@ -81,7 +81,7 @@ message GetStreamQuery{
 
 message GetEventsRequest {
   Query query = 1;
-  Position last_retrieved_position = 2;
+  Position from_position = 2;
   int32 count = 3;
   Direction direction = 4;
   string boundary = 5;

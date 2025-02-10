@@ -194,7 +194,7 @@ func (s *EventStore) SaveEvents(ctx context.Context, req *SaveEventsRequest) (re
 }
 
 func (s *EventStore) GetEvents(ctx context.Context, req *GetEventsRequest) (*GetEventsResponse, error) {
-	if req.LastRetrievedPosition == nil || req.Count == 0 {
+	if req.FromPosition == nil || req.Count == 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "LastRetrievedPosition and Count are required")
 	}
 	return s.getEventsFn.Get(ctx, req)
@@ -389,7 +389,7 @@ func (s *EventStore) sendHistoricalEvents(
 	for {
 		events, err := s.GetEvents(ctx, &GetEventsRequest{
 			Query:                 query,
-			LastRetrievedPosition: lastPosition,
+			FromPosition: lastPosition,
 			Count:                 batchSize,
 			Direction:             Direction_ASC,
 			Boundary:              boundary,

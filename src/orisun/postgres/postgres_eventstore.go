@@ -138,14 +138,14 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 
 	var fromPosition *map[string]uint64
 
-	if req.LastRetrievedPosition != nil && req.LastRetrievedPosition != (&eventstore.Position{}) {
+	if req.FromPosition != nil && req.FromPosition != (&eventstore.Position{}) {
 		fromPosition = &map[string]uint64{
-			"transaction_id": req.LastRetrievedPosition.CommitPosition,
-			"global_id":      req.LastRetrievedPosition.PreparePosition,
+			"transaction_id": req.FromPosition.CommitPosition,
+			"global_id":      req.FromPosition.PreparePosition,
 		}
 	}
 
-	var params *(map[string]interface{})
+	var globalQuery *(map[string]interface{})
 
 	var criteriaList []map[string]interface{}
 	if req.Query != nil {
@@ -153,16 +153,16 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	}
 
 	if len(criteriaList) > 0 {
-		params = &map[string]interface{}{
+		globalQuery = &map[string]interface{}{
 			"criteria": criteriaList,
 		}
 	}
 
 	var paramsJSON *string = nil
 
-	if params != nil && len(*params) > 0 {
+	if globalQuery != nil && len(*globalQuery) > 0 {
 		var err interface{} = ""
-		paramsString, err := json.Marshal(params)
+		paramsString, err := json.Marshal(globalQuery)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to marshal params: %v", err)
 		}
@@ -197,11 +197,11 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		return nil, status.Errorf(codes.Internal, "failed to marshal from position: %v", err)
 	}
 
-	// exec, err := tx.Exec("SET log_statement = 'all';")
-	// if err != nil {
-	// 	return nil, status.Errorf(codes.Internal, "failed to set log_statement: %v", err)
-	// }
-	// exec.RowsAffected()
+	exec, err := tx.Exec("SET log_statement = 'all';")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to set log_statement: %v", err)
+	}
+	exec.RowsAffected()
 	rows, err := tx.QueryContext(
 		ctx,
 		selectMatchingEvents,
@@ -349,7 +349,7 @@ func PollEventsFromPgToNats(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		
+
 		hash := sha256.Sum256([]byte(boundary))
 		lockID := int64(binary.BigEndian.Uint64(hash[:]))
 
@@ -373,10 +373,10 @@ func PollEventsFromPgToNats(
 
 		logger.Debugf("Polling for boundary: %v", boundary)
 		req := &eventstore.GetEventsRequest{
-			LastRetrievedPosition: lastPosition,
-			Count:                 batchSize,
-			Direction:             eventstore.Direction_ASC,
-			Boundary:              boundary,
+			FromPosition: lastPosition,
+			Count:        batchSize,
+			Direction:    eventstore.Direction_ASC,
+			Boundary:     boundary,
 		}
 		resp, err := eventStore.Get(ctx, req)
 		if err != nil {
