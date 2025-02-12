@@ -259,6 +259,7 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 			logger.Errorf("Historical events processing failed: %v", historicalErr)
 			return
 		}
+		
 		if (lastTime == time.Time{}) {
 			lastTime = time.Now()
 		}

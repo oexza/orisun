@@ -31,7 +31,7 @@ ORISUN_PG_NAME=your_database \
 ORISUN_PG_SCHEMAS=your_schema \
 orisun-[platform]-[arch]
 
-# Example with all options
+# Example
 ORISUN_PG_HOST=localhost \
 ORISUN_PG_PORT=5432 \
 ORISUN_PG_USER=postgres \
@@ -239,14 +239,14 @@ grpcurl -d @ localhost:50051 eventstore.EventStore/SubscribeToPubSub <<
 ### Multiple Bounded Contexts
 ```bash
 # User domain events in users schema
-grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents
 {
   "boundary": "users",
   "events": [...]
 }
 
 # Order domain events in orders schema
-grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents <<EOF
+grpcurl -d @ localhost:50051 eventstore.EventStore/SaveEvents
 {
   "boundary": "orders",
   "events": [...]
