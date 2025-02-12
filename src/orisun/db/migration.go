@@ -31,8 +31,18 @@ func RunDbScripts(db *sql.DB, schema string, isAdminSchema bool, ctx context.Con
 func runMigrationsInFolder(db *sql.DB, folder, schema string, ctx context.Context) error {
 	// Create schema if it doesn't exist and it's not public
 	if schema != "public" {
-		if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schema)); err != nil {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+		defer tx.Rollback()
+
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schema)); err != nil {
 			return fmt.Errorf("failed to create schema %s: %w", schema, err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit schema creation: %w", err)
 		}
 	}
 
@@ -43,7 +53,7 @@ func runMigrationsInFolder(db *sql.DB, folder, schema string, ctx context.Contex
 	}
 
 	var combinedScript strings.Builder
-	
+
 	// Set search path for this batch of migrations
 	combinedScript.WriteString(fmt.Sprintf("SET search_path TO %s;\n", schema))
 
@@ -51,7 +61,6 @@ func runMigrationsInFolder(db *sql.DB, folder, schema string, ctx context.Contex
 		if file.IsDir() {
 			continue
 		}
-
 		content, err := sqlScripts.ReadFile(path.Join("migrations", folder, file.Name()))
 		if err != nil {
 			return fmt.Errorf("failed to read script %s: %w", file.Name(), err)

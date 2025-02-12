@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
+	dbase "orisun/src/orisun/db"
 	"orisun/src/orisun/eventstore"
 	"orisun/src/orisun/logging"
-	dbase "orisun/src/orisun/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,10 +73,9 @@ func setupTestDatabase(t *testing.T, container *PostgresContainer) (*sql.DB, err
 	}
 
 	// Run database migrations using the common scripts
-	if err := dbase.RunDbScripts(db, "public", false, context.Background()); err != nil {
+	if err := dbase.RunDbScripts(db, "test_boundary", false, context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to run database migrations: %v", err)
 	}
-
 	return db, nil
 }
 
@@ -90,7 +89,7 @@ func TestSaveAndGetEvents(t *testing.T) {
 	defer db.Close()
 
 	logger, err := logging.ZapLogger("debug")
-	if err!= nil {
+	if err != nil {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 

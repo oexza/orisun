@@ -202,41 +202,20 @@ func (s *EventStore) GetEvents(ctx context.Context, req *GetEventsRequest) (*Get
 
 func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreRequest, stream EventStore_CatchUpSubscribeToEventsServer) error {
 	ctx, cancel := context.WithCancel(stream.Context())
-	defer cancel()
-
 	unlockFunc, err := s.lockProvider.Lock(ctx, req.Boundary+"__"+req.SubscriberName)
 
 	if err != nil {
+		cancel()
 		return status.Errorf(codes.AlreadyExists, "failed to acquire lock: %v", err)
 	}
-	defer unlockFunc()
 
-	// Create or access the KV store for active subscriptions
-	// kv, err := s.js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
-	// 	Bucket:      activeSubscriptionsKVBucket,
-	// 	Description: "Active subscriptions",
-	// 	Storage:     jetstream.MemoryStorage,
-	// })
-
-	// if err != nil {
-	// 	return status.Errorf(codes.Internal, "failed to access KV store: %v", err)
-	// }
-
-	// // Try to create a new entry for this subscription
-	// keyName := req.Boundary + "." + req.SubscriberName
-	// _, err = kv.Put(ctx, keyName, []byte(time.Now().String()))
-	// if err != nil {
-	// 	if strings.Contains(err.Error(), "key exists") {
-	// 		return status.Errorf(codes.AlreadyExists, "subscription already exists for subject: %s", req.SubscriberName)
-	// 	}
-	// 	return status.Errorf(codes.Internal, "failed to create subscription entry: %v", err)
-	// }
-
-	// // Ensure we remove the KV entry when we're done
-	// defer kv.Delete(ctx, keyName)
+	// Ensure cleanup happens in all cases
+	defer func() {
+		unlockFunc()
+		cancel()
+	}()
 
 	// Initialize position tracking
-	// var positionMu sync.RWMutex
 	lastPosition := req.GetPosition()
 
 	// Process historical events
@@ -259,7 +238,7 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 			logger.Errorf("Historical events processing failed: %v", historicalErr)
 			return
 		}
-		
+
 		if (lastTime == time.Time{}) {
 			lastTime = time.Now()
 		}
@@ -274,6 +253,7 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 			return status.Errorf(codes.Internal, "historical events failed: %v", historicalErr)
 		}
 	case <-ctx.Done():
+		logger.Error("Context cancelled, stopping subscription")
 		return ctx.Err()
 	}
 
@@ -284,8 +264,7 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 	}
 
 	consumer, err := subs.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-		Name: req.SubscriberName,
-		// FilterSubject:  GetEventsSubjectName(req.Boundary),
+		Name:          req.SubscriberName,
 		DeliverPolicy: jetstream.DeliverByStartTimePolicy,
 		AckPolicy:     jetstream.AckNonePolicy,
 		MaxDeliver:    -1,
@@ -298,55 +277,72 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 	}
 	defer subs.DeleteConsumer(ctx, req.SubscriberName)
 
+	// Start consuming messages with a done channel for cleanup
+	msgDone := make(chan struct{})
+	msgCtx, msgCancel := context.WithCancel(ctx)
+	defer msgCancel()
+
 	// Start consuming messages
 	msgs, err := consumer.Messages(jetstream.PullMaxMessages(200))
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to get message iterator: %v", err)
 	}
 
-	// Keep the connection alive and process new messages
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Error("Context cancelled, stopping subscription")
-			unlockFunc()
-			return ctx.Err()
-		default:
-			msg, err := msgs.Next()
-			if err != nil {
-				if ctx.Err() != nil {
-					logger.Errorf("Error in subscription context: %v", err)
-					return ctx.Err()
-				}
-				logger.Errorf("Error getting next message: %v", err)
-				continue
-			}
-
-			var event Event
-			if err := json.Unmarshal(msg.Data(), &event); err != nil {
-				logger.Errorf("Failed to unmarshal event: %v", err)
-				msg.Ack()
-				continue
-			}
-
-			isNewer := isEventNewer(event.Position, lastPosition)
-
-			if isNewer && s.eventMatchesQueryCriteria(&event, req.Query) {
-				if err := stream.Send(&event); err != nil {
-					logger.Errorf("Failed to send event: %v", err)
-					msg.Nak() // Negative acknowledgment to retry later
+	// Start message processing in a separate goroutine
+	go func() {
+		defer close(msgDone)
+		for {
+			select {
+			case <-msgCtx.Done():
+				logger.Info("Message processing stopped")
+				return
+			default:
+				msg, err := msgs.Next()
+				if err != nil {
+					if msgCtx.Err() != nil {
+						logger.Info("Context cancelled, stopping message processing")
+						return
+					}
+					logger.Errorf("Error getting next message: %v", err)
 					continue
 				}
 
-				lastPosition = event.Position
-
-				if err := msg.Ack(); err != nil {
-					logger.Errorf("Failed to acknowledge message: %v", err)
+				var event Event
+				if err := json.Unmarshal(msg.Data(), &event); err != nil {
+					logger.Errorf("Failed to unmarshal event: %v", err)
+					msg.Ack()
+					continue
 				}
-			} else {
-				msg.Ack() // Acknowledge messages that don't match criteria
+
+				isNewer := isEventNewer(event.Position, lastPosition)
+
+				if isNewer && s.eventMatchesQueryCriteria(&event, req.Query) {
+					if err := stream.Send(&event); err != nil {
+						logger.Errorf("Failed to send event: %v", err)
+						msg.Nak() // Negative acknowledgment to retry later
+						continue
+					}
+
+					lastPosition = event.Position
+
+					if err := msg.Ack(); err != nil {
+						logger.Errorf("Failed to acknowledge message: %v", err)
+					}
+				} else {
+					msg.Ack() // Acknowledge messages that don't match criteria
+				}
 			}
 		}
+	}()
+
+	// Wait for either context cancellation or message processing completion
+	select {
+	case <-ctx.Done():
+		logger.Info("Context cancelled, cleaning up subscription")
+		return ctx.Err()
+	case <-msgDone:
+		logger.Info("Message processing completed")
+		return nil
 	}
 }
 
@@ -389,11 +385,11 @@ func (s *EventStore) sendHistoricalEvents(
 
 	for {
 		events, err := s.GetEvents(ctx, &GetEventsRequest{
-			Query:                 query,
+			Query:        query,
 			FromPosition: lastPosition,
-			Count:                 batchSize,
-			Direction:             Direction_ASC,
-			Boundary:              boundary,
+			Count:        batchSize,
+			Direction:    Direction_ASC,
+			Boundary:     boundary,
 		})
 
 		if err != nil {
