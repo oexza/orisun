@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none"
+    xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="yorubaGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#6B4423"/>
+            <stop offset="100%" style="stop-color:#8B4513"/>
+        </linearGradient>
+    </defs>
+
+    <!-- Background circle representing the cosmic sphere in Yoruba cosmology -->
+    <circle cx="256" cy="256" r="240" fill="url(#yorubaGradient)" opacity="0.05"/>
+
+    <!-- Adinkra-inspired flowing patterns representing event streams -->
+    <path d="M256 96C176.5 96 112 160.5 112 240C112 319.5 176.5 384 256 384" stroke="#8B4513" stroke-width="24" stroke-linecap="round" fill="none">
+        <animate attributeName="stroke-dasharray" values="0,1000;1000,0;0,1000" dur="4s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-opacity" values="0.4;1;0.4" dur="4s" repeatCount="indefinite"/>
+    </path>
+
+    <!-- Outer pattern representing infinity and continuity -->
+    <path d="M256 48C150.5 48 64 134.5 64 240C64 345.5 150.5 432 256 432" stroke="#6B4423" stroke-width="16" stroke-linecap="round" fill="none" opacity="0.7">
+        <animate attributeName="stroke-dasharray" values="0,1500;1500,0;0,1500" dur="6s" repeatCount="indefinite"/>
+        <animate attributeName="stroke-opacity" values="0.3;0.8;0.3" dur="6s" repeatCount="indefinite"/>
+    </path>
+
+    <!-- Central sphere representing 'Ori' (source/origin) -->
+    <circle cx="256" cy="256" r="32" fill="#8B4513">
+        <animate attributeName="r" values="32;34;32" dur="2s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- Emanating points representing events and cosmic energy -->
+    <g>
+        <circle cx="256" cy="144" r="8" fill="#6B4423">
+            <animate attributeName="opacity" values="0;0.8;0" dur="3s" repeatCount="indefinite"/>
+            <animate attributeName="r" values="6;8;6" dur="3s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="368" cy="256" r="8" fill="#6B4423">
+            <animate attributeName="opacity" values="0;0.8;0" dur="3s" begin="1s" repeatCount="indefinite"/>
+            <animate attributeName="r" values="6;8;6" dur="3s" begin="1s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="256" cy="368" r="8" fill="#6B4423">
+            <animate attributeName="opacity" values="0;0.8;0" dur="3s" begin="2s" repeatCount="indefinite"/>
+            <animate attributeName="r" values="6;8;6" dur="3s" begin="2s" repeatCount="indefinite"/>
+        </circle>
+    </g>
+</svg>

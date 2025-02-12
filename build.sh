@@ -1,8 +1,8 @@
 #!/bin/bash
 
-
-TARGET_OS="darwin" # Change to "darwin" for macOS or "windows" for Windows
-TARGET_ARCH="arm64" # Change to "386" for 32-bit
+# Default to current system's OS and architecture if not specified
+TARGET_OS=${1:-"darwin"}
+TARGET_ARCH=${2:-"arm64"}
 
 # Set the output binary name and the target OS/architecture
 OUTPUT_NAME="orisun-$TARGET_OS-$TARGET_ARCH"

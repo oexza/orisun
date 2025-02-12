@@ -455,7 +455,6 @@ func (s *EventStore) eventMatchesQueryCriteria(event *Event, criteria *Query) bo
 				break
 			}
 		}
-
 		// If all tags in this group matched, we can return true
 		if allTagsMatch {
 			return true

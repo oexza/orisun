@@ -1,9 +1,19 @@
 # Orisun - A Batteries Included Event Store
 
+<p align="center">
+  <img src="assets/logo.svg" width="200" height="200" alt="Orisun Logo">
+</p>
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## Project Status
+Orisun is currently in beta. While it's being used in production by several organizations, the API may undergo breaking changes before reaching v1.0.0. We follow semantic versioning.
+
 ## Description
-Orisun is a batteries-included event store, with an embedded NATS JetStream server and PostgreSQL support. It provides a reliable, scalable event store with built-in pub/sub capabilities, making it ideal for event-driven architectures and CQRS applications.
+Orisun is a batteries-included event store, with an embedded NATS JetStream server and PostgreSQL support. It provides a reliable, scalable event store with built-in pub/sub capabilities, making it ideal for event-driven architectures and CQRS applications. Built with extensibility in mind, Orisun's modular architecture allows for different storage backends, with plans to support additional databases beyond PostgreSQL in future releases.
 
 ### Key Features
+- **Extensible Architecture**: Modular design supporting multiple storage backends
 - **Embedded NATS JetStream**: No separate NATS installation required
 - **Auto Database Setup**: Automatically creates and manages its schema
 - **Stream-based Event Sourcing**: Traditional stream-based event sourcing with optimistic concurrency
@@ -15,8 +25,12 @@ Orisun is a batteries-included event store, with an embedded NATS JetStream serv
 
 ## Prerequisites
 - PostgreSQL 13+ database
+- Go 1.20+ (for building from source)
+- Docker (optional, for containerized deployment)
 
-## Quick Start (Using Pre-built Binary)
+## Installation
+
+### Using Pre-built Binary
 
 1. Download the latest release for your platform from the [releases page](https://github.com/yourusername/orisun/releases)
 
@@ -266,12 +280,44 @@ This separation ensures:
 - Separate consistency guarantees
 - Clear bounded context boundaries
 
+## Configuration
+
+Orisun can be configured using environment variables:
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `ORISUN_PG_HOST` | PostgreSQL host | localhost | Yes |
+| `ORISUN_PG_PORT` | PostgreSQL port | 5432 | Yes |
+| `ORISUN_PG_USER` | PostgreSQL username | postgres | Yes |
+| `ORISUN_PG_PASSWORD` | PostgreSQL password | - | Yes |
+| `ORISUN_PG_NAME` | PostgreSQL database name | - | Yes |
+| `ORISUN_PG_SCHEMAS` | Comma-separated list of schemas | - | Yes |
+| `ORISUN_GRPC_PORT` | gRPC server port | 50051 | No |
+| `ORISUN_NATS_PORT` | NATS server port | 4222 | No |
+| `ORISUN_NATS_STORE_DIR` | NATS storage directory | /tmp/nats | No |
+
 ## Error Handling
-Common error responses:
-- `ALREADY_EXISTS`: Consistency condition violation
-- `INVALID_ARGUMENT`: Missing required fields
-- `INTERNAL`: Database or system errors
-- `NOT_FOUND`: Stream or consumer not found
+
+### Common Error Responses
+- `ALREADY_EXISTS`: Consistency condition violation (e.g., concurrent updates to the same stream)
+- `INVALID_ARGUMENT`: Missing or invalid required fields
+- `INTERNAL`: Database or system errors (check logs for details)
+- `NOT_FOUND`: Requested stream or consumer doesn't exist
+
+### Troubleshooting
+1. **Connection Issues**
+   - Verify PostgreSQL connection settings
+   - Check if PostgreSQL is running and accessible
+   - Ensure NATS ports are available
+
+2. **Performance Issues**
+   - Monitor PostgreSQL query performance
+   - Check NATS message backlog
+   - Verify system resources (CPU, memory, disk)
+
+3. **Schema Issues**
+   - Ensure schemas are properly configured
+   - Check PostgreSQL user permissions
 
 ## Building from Source
 
@@ -287,7 +333,13 @@ cd orisun
 
 2. Build the binary:
 ```bash
+# Build for current system (default)
 ./build.sh
+
+# Cross-compile for specific OS/architecture
+./build.sh linux amd64     # For Linux x86_64
+./build.sh darwin arm64    # For macOS Apple Silicon
+./build.sh windows amd64   # For Windows x86_64
 ```
 
 3. Run the built binary:
@@ -316,9 +368,10 @@ go run .
 
 ## Architecture
 Orisun uses:
-- PostgreSQL for durable event storage and consistency guarantees
+- PostgreSQL for durable event storage and consistency guarantees (with plans to support other databases)
 - NATS JetStream for real-time event streaming and pub/sub
 - gRPC for client-server communication
+- Modular plugin system for extending functionality and adding new storage implementations
 
 ## Performance
 - Handles thousands of events per second
@@ -327,11 +380,27 @@ Orisun uses:
 - Optimized for both write and read operations
 
 ## Contributing
+
+### Development Setup
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Clone your fork: `git clone https://github.com/yourusername/orisun.git`
+3. Create a feature branch: `git checkout -b feature/amazing-feature`
+4. Install dependencies: `go mod download`
+5. Make your changes
+6. Run tests: `go test ./...`
+7. Commit changes: `git commit -m 'Add some amazing feature'`
+8. Push to your fork: `git push origin feature/amazing-feature`
+9. Open a Pull Request
+
+### Code Style
+- Follow Go best practices and style guide
+- Write meaningful commit messages
+- Include tests for new features
+- Update documentation as needed
+
+### Community Guidelines
+- Report bugs and security issues responsibly
+- Participate in discussions and reviews constructively
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
