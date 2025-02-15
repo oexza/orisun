@@ -8,12 +8,13 @@ import (
 
 	dbase "orisun/src/orisun/db"
 	"orisun/src/orisun/eventstore"
-	"orisun/src/orisun/logging"
+	logging "orisun/src/orisun/logging"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
+	config "orisun/src/orisun/config"
 )
 
 type PostgresContainer struct {
@@ -76,6 +77,7 @@ func setupTestDatabase(t *testing.T, container *PostgresContainer) (*sql.DB, err
 	if err := dbase.RunDbScripts(db, "test_boundary", false, context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to run database migrations: %v", err)
 	}
+
 	return db, nil
 }
 
@@ -89,12 +91,17 @@ func TestSaveAndGetEvents(t *testing.T) {
 	defer db.Close()
 
 	logger, err := logging.ZapLogger("debug")
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
+	require.NoError(t, err)
+
+	var boundaryToSchemaMappings = map[string]config.BoundaryToPostgresSchemaMapping{
+		"test_boundary": {
+			Schema:   "test_boundary",
+			Boundary: "test_boundary",
+		},
 	}
 
-	saveEvents := NewPostgresSaveEvents(db, &logger)
-	getEvents := NewPostgresGetEvents(db, &logger)
+	saveEvents := NewPostgresSaveEvents(db, &logger, boundaryToSchemaMappings)
+	getEvents := NewPostgresGetEvents(db, &logger, boundaryToSchemaMappings)
 
 	// Test saving events
 	events := []eventstore.EventWithMapTags{

@@ -89,6 +89,7 @@ func NewEventStoreServer(
 			MaxMsgs: 100,
 			// MaxAge:  5 * time.Minute,
 			// Storage: jetstream.MemoryStorage,
+		
 		})
 
 		if err != nil {

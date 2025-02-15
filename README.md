@@ -295,6 +295,54 @@ Orisun can be configured using environment variables:
 | `ORISUN_GRPC_PORT` | gRPC server port | 50051 | No |
 | `ORISUN_NATS_PORT` | NATS server port | 4222 | No |
 | `ORISUN_NATS_STORE_DIR` | NATS storage directory | /tmp/nats | No |
+| `ORISUN_NATS_MAX_PAYLOAD` | Maximum payload size for NATS messages | 1048576 | No |
+| `ORISUN_NATS_CLUSTER_NAME` | Name of the NATS cluster | orisun-nats-cluster | No |
+| `ORISUN_NATS_CLUSTER_HOST` | Host for NATS cluster | localhost | No |
+| `ORISUN_NATS_CLUSTER_PORT` | Port for NATS cluster | 6222 | No |
+| `ORISUN_NATS_CLUSTER_USERNAME` | Username for NATS cluster | nats | No |
+| `ORISUN_NATS_CLUSTER_PASSWORD` | Password for NATS cluster | password@1 | No |
+| `ORISUN_NATS_CLUSTER_ENABLED` | Enable NATS clustering | false | No |
+| `ORISUN_NATS_CLUSTER_TIMEOUT` | Timeout for NATS cluster operations | 60s | No |
+| `ORISUN_NATS_CLUSTER_ROUTES` | Comma-separated list of cluster routes | nats://localhost:6333,nats://localhost:6334 | No |
+
+### Running Modes
+
+#### Standalone Mode
+By default, Orisun runs in standalone mode. Here's an example configuration:
+
+```bash
+ORISUN_PG_HOST=localhost \
+ORISUN_PG_PORT=5432 \
+ORISUN_PG_USER=postgres \
+ORISUN_PG_PASSWORD=your_password \
+ORISUN_PG_NAME=your_database \
+ORISUN_PG_SCHEMAS=public \
+ORISUN_GRPC_PORT=5005 \
+ORISUN_NATS_PORT=4222 \
+orisun-darwin-arm64
+```
+
+#### Clustered Mode
+For high availability, you can run Orisun in clustered mode. Here's an example configuration:
+
+```bash
+ORISUN_PG_HOST=localhost \
+ORISUN_PG_PORT=5432 \
+ORISUN_PG_USER=postgres \
+ORISUN_PG_PASSWORD=your_password \
+ORISUN_PG_NAME=your_database \
+ORISUN_PG_SCHEMAS=public \
+ORISUN_GRPC_PORT=5005 \
+ORISUN_NATS_PORT=4222 \
+ORISUN_NATS_CLUSTER_ENABLED=true \
+ORISUN_NATS_CLUSTER_NAME=orisun-cluster \
+ORISUN_NATS_CLUSTER_HOST=localhost \
+ORISUN_NATS_CLUSTER_PORT=6222 \
+ORISUN_NATS_CLUSTER_USERNAME=nats \
+ORISUN_NATS_CLUSTER_PASSWORD=your_cluster_password \
+ORISUN_NATS_CLUSTER_ROUTES='nats://localhost:6333,nats://localhost:6334' \
+orisun-darwin-arm64
+```
 
 ## Error Handling
 

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
@@ -116,10 +117,12 @@ func main() {
 	// Create a context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 
+	var postgesBoundarySchemaMappings = config.Postgres.GetSchemaMapping()
+
 	// Run database migrations
-	for _, schema := range config.Boundaries {
-		isAdminSchema := schema.Name == config.Admin.Schema
-		if err := dbase.RunDbScripts(db, schema.Name, isAdminSchema, ctx); err != nil {
+	for _, schema := range postgesBoundarySchemaMappings {
+		isAdminSchema := schema.Schema == config.Admin.Schema
+		if err := dbase.RunDbScripts(db, schema.Schema, isAdminSchema, ctx); err != nil {
 			AppLogger.Fatalf("Failed to run database migrations for schema %s: %v", schema, err)
 		}
 		AppLogger.Info("Database migrations for schema %s completed successfully", schema)
@@ -134,7 +137,7 @@ func main() {
 		StoreDir:  config.Nats.StoreDir,
 	}
 
-	// Only add cluster configuration if a cluster name is provided
+	// Only add cluster configuration if cluster is enabled
 	if config.Nats.Cluster.Enabled {
 		natsOptions.Cluster = server.ClusterOpts{
 			Name: config.Nats.Cluster.Name,
@@ -161,6 +164,7 @@ func main() {
 		AppLogger.Fatal("NATS server failed to start")
 	}
 	defer natsServer.Shutdown()
+	AppLogger.Info("NATS server started on ", natsServer.ClientURL())
 
 	// Connect to NATS
 	nc, err := nats.Connect(natsServer.ClientURL())
@@ -175,12 +179,50 @@ func main() {
 		AppLogger.Fatalf("Failed to create JetStream context: %v", err)
 	}
 
+	//wait for JetSteam system to be available, retry until it is available
+	jetStreamTestDone := make(chan struct{})
+
+	go func() {
+		defer close(jetStreamTestDone)
+
+		for {
+			streamName := "test_jetstream"
+			_, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+				Name: streamName,
+				Subjects: []string{
+					streamName + ".test",
+				},
+				MaxMsgs: 1,
+			})
+
+			if err != nil {
+				AppLogger.Warnf("failed to add stream: %v %v", streamName, err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			r, err := js.Publish(ctx, streamName+".test", []byte("test"))
+			if err != nil {
+				AppLogger.Warnf("Failed to publish to JetStream, retrying in 5 second: %v", err)
+				time.Sleep(5 * time.Second)
+			} else {
+				AppLogger.Infof("Published to JetStream: %v", r)
+				break
+			}
+		}
+	}()
+
+	select {
+	case <-jetStreamTestDone:
+		AppLogger.Info("JetStream system is available")
+	}
+
 	// Create EventStore grpc server
 	eventStore := pb.NewEventStoreServer(
 		ctx,
 		js,
-		postgres.NewPostgresSaveEvents(db, &AppLogger),
-		postgres.NewPostgresGetEvents(db, &AppLogger),
+		postgres.NewPostgresSaveEvents(db, &AppLogger, postgesBoundarySchemaMappings),
+		postgres.NewPostgresGetEvents(db, &AppLogger, postgesBoundarySchemaMappings),
 		&pgLockProvider{
 			db: db,
 		},
@@ -190,23 +232,26 @@ func main() {
 	defer cancel()
 
 	//poll events from Postgres to NATS
-	for _, schema := range config.Postgres.GetPostgresSchemas() {
+	for _, schema := range config.Postgres.GetSchemaMapping() {
 		// Get last published position
-		lastPosition, err := pb.GetLastPublishedPosition(ctx, js, schema)
+		lastPosition, err := pb.GetLastPublishedPosition(ctx, js, schema.Boundary)
 		if err != nil {
 			AppLogger.Fatalf("Failed to get last published position: %v", err)
 		}
 		AppLogger.Info("Last published position for schema %v: %v", schema, lastPosition)
-		go postgres.PollEventsFromPgToNats(
-			ctx,
-			db,
-			js,
-			postgres.NewPostgresGetEvents(db, &AppLogger),
-			config.PollingPublisher.BatchSize,
-			lastPosition,
-			AppLogger,
-			schema,
-		)
+		go func() {
+			postgres.PollEventsFromPgToNats(
+				ctx,
+				db,
+				js,
+				postgres.NewPostgresGetEvents(db, &AppLogger, postgesBoundarySchemaMappings),
+				config.PollingPublisher.BatchSize,
+				lastPosition,
+				AppLogger,
+				schema.Boundary,
+				schema.Schema,
+			)
+		}()
 	}
 
 	// Start admin server
@@ -313,7 +358,7 @@ func convertToURLSlice(routes []string) []*url.URL {
 	for _, route := range routes {
 		u, err := url.Parse(route)
 		if err != nil {
-			AppLogger.Errorf("Warning: invalid route URL %q: %v", route, err)
+			AppLogger.Fatalf("Warning: invalid route URL %q: %v", route, err)
 			continue
 		}
 		urls = append(urls, u)

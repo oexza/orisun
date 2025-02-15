@@ -13,6 +13,8 @@ import (
 
 	eventstore "orisun/src/orisun/eventstore"
 
+	config "orisun/src/orisun/config"
+
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -36,21 +38,25 @@ set search_path to '%s'
 `
 
 type PostgresSaveEvents struct {
-	db     *sql.DB
-	logger logging.Logger
+	db                     *sql.DB
+	logger                 logging.Logger
+	boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping
 }
 
-func NewPostgresSaveEvents(db *sql.DB, logger *logging.Logger) *PostgresSaveEvents {
-	return &PostgresSaveEvents{db: db, logger: *logger}
+func NewPostgresSaveEvents(db *sql.DB, logger *logging.Logger,
+	boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping) *PostgresSaveEvents {
+	return &PostgresSaveEvents{db: db, logger: *logger, boundarySchemaMappings: boundarySchemaMappings}
 }
 
 type PostgresGetEvents struct {
-	db     *sql.DB
-	logger logging.Logger
+	db                     *sql.DB
+	logger                 logging.Logger
+	boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping
 }
 
-func NewPostgresGetEvents(db *sql.DB, logger *logging.Logger) *PostgresGetEvents {
-	return &PostgresGetEvents{db: db, logger: *logger}
+func NewPostgresGetEvents(db *sql.DB, logger *logging.Logger,
+	boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping) *PostgresGetEvents {
+	return &PostgresGetEvents{db: db, logger: *logger, boundarySchemaMappings: boundarySchemaMappings}
 }
 
 func (s *PostgresSaveEvents) Save(
@@ -92,7 +98,9 @@ func (s *PostgresSaveEvents) Save(
 	}
 	defer tx.Rollback()
 
-	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, boundary))
+	var schema = s.boundarySchemaMappings[boundary].Schema
+
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
 	if err != nil {
 		return "", 0, status.Errorf(codes.Internal, "failed to set search path: %v", err)
 	}
@@ -100,7 +108,7 @@ func (s *PostgresSaveEvents) Save(
 	s.logger.Debugf("insertEventsWithConsistency: %s", &streamSubsetQueryJSON)
 	row := tx.QueryRowContext(
 		ctx,
-		fmt.Sprintf(insertEventsWithConsistency, boundary),
+		fmt.Sprintf(insertEventsWithConsistency, schema),
 		streamSubsetQueryJSON,
 		consistencyConditionJSONString,
 		string(eventsJSON),
@@ -135,7 +143,6 @@ func (s *PostgresSaveEvents) Save(
 }
 
 func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRequest) (*eventstore.GetEventsResponse, error) {
-
 	var fromPosition *map[string]uint64
 
 	if req.FromPosition != nil && req.FromPosition != (&eventstore.Position{}) {
@@ -187,7 +194,9 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	}
 	defer tx.Rollback()
 
-	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, req.Boundary))
+	var schema = s.boundarySchemaMappings[req.Boundary].Schema
+
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to set search path: %v", err)
 	}
@@ -331,13 +340,16 @@ func PollEventsFromPgToNats(
 	batchSize int32,
 	lastPosition *eventstore.Position,
 	logger logging.Logger,
-	boundary string) error {
+	boundary string,
+	schema string) error {
+
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get database connection: %v", err)
 	}
 	defer conn.Close()
 
+	// Begin a transaction
 	tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %v", err)
@@ -353,6 +365,11 @@ func PollEventsFromPgToNats(
 		hash := sha256.Sum256([]byte(boundary))
 		lockID := int64(binary.BigEndian.Uint64(hash[:]))
 
+		_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
+		if err != nil {
+			return fmt.Errorf("failed to set search path: %v", err)
+		}
+
 		err = tx.QueryRowContext(ctx, "SELECT pg_advisory_xact_lock($1)", lockID).Err()
 		if err != nil {
 			logger.Errorf("Failed to acquire lock: %v, will retry", err)
@@ -360,7 +377,7 @@ func PollEventsFromPgToNats(
 			continue
 		}
 
-		logger.Info("Successfully acquired polling lock for %v", boundary)
+		logger.Infof("Successfully acquired polling lock for %v", boundary)
 		break
 	}
 
@@ -396,9 +413,11 @@ func PollEventsFromPgToNats(
 				logger, event.Position.PreparePosition, event.Position.CommitPosition,
 			)
 		}
+
 		if len(resp.Events) > 0 {
 			lastPosition = resp.Events[len(resp.Events)-1].Position
 		}
+		logger.Debugf(":%v Sleeping.....", boundary)
 		time.Sleep(1 * time.Second) // Polling interval
 	}
 }

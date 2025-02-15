@@ -53,13 +53,31 @@ type DBConfig struct {
 	Schemas  string
 }
 
+type BoundaryToPostgresSchemaMapping struct {
+	Schema   string
+	Boundary string
+}
+
 type Boundary struct {
 	Name        string
 	Description string
 }
 
-func (c *DBConfig) GetPostgresSchemas() []string {
-	return strings.Split(c.Schemas, ",")
+func (p *DBConfig) GetSchemaMapping() map[string]BoundaryToPostgresSchemaMapping {
+	var schmaMaps = strings.Split(p.Schemas, ",")
+	var mappings = make(map[string]BoundaryToPostgresSchemaMapping, len(schmaMaps))
+
+	for _, schema := range schmaMaps {
+		var mapped = strings.Split(schema, ":")
+		if len(mapped) != 2 {
+			panic("Invalid schema mapping " + schema)
+		}
+		mappings[mapped[0]] = BoundaryToPostgresSchemaMapping{
+			Boundary: strings.TrimSpace(mapped[0]),
+			Schema:   strings.TrimSpace(mapped[1]),
+		}
+	}
+	return mappings
 }
 
 type NatsClusterConfig struct {
@@ -81,38 +99,54 @@ func (c *NatsClusterConfig) GetRoutes() []string {
 var configData []byte
 
 func LoadConfig() (*AppConfig, error) {
-    viper.SetConfigType("yaml")
+	viper.SetConfigType("yaml")
 
-    if err := viper.ReadConfig(bytes.NewReader(configData)); err != nil {
-        return nil, fmt.Errorf("failed to read config data: %w", err)
-    }
+	if err := viper.ReadConfig(bytes.NewReader(configData)); err != nil {
+		return nil, fmt.Errorf("failed to read config data: %w", err)
+	}
 
-    // Correct environment variable substitution
-    for _, key := range viper.AllKeys() {
-        value := viper.Get(key)
-        if s, ok := value.(string); ok {
-            substituted := substituteEnvVars(s)
-            viper.Set(key, substituted)
-        }
-    }
+	// Correct environment variable substitution
+	for _, key := range viper.AllKeys() {
+		value := viper.Get(key)
+		if s, ok := value.(string); ok {
+			substituted := substituteEnvVars(s)
+			viper.Set(key, substituted)
+		}
+	}
 
-    var config AppConfig
+	var config AppConfig
 
-    if err := viper.Unmarshal(&config); err != nil {
-        return nil, fmt.Errorf("failed to unmarshal config: %w", err)
-    }
+	if err := viper.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
 
-    fmt.Printf("config is %+v\n", config)
-    return &config, nil
+	fmt.Printf("config is %+v\n", config)
+	return &config, nil
 }
 
 func substituteEnvVars(value string) string {
 	if strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") {
-		parts := strings.SplitN(value[2:len(value)-1], ":", 2)
-		envVar := parts[0]
+		// Extract content between ${ and }
+		content := value[2 : len(value)-1]
+
+		// Find the position of the first colon that's not within backticks
+		var colonPos int = -1
+		inBackticks := false
+		for i, char := range content {
+			if char == '`' {
+				inBackticks = !inBackticks
+			} else if char == ':' && !inBackticks {
+				colonPos = i
+				break
+			}
+		}
+
+		content = strings.ReplaceAll(content, "`", "")
+		envVar := content
 		defaultValue := ""
-		if len(parts) > 1 {
-			defaultValue = parts[1]
+		if colonPos != -1 {
+			envVar = content[:colonPos]
+			defaultValue = content[colonPos+1:]
 		}
 
 		if envValue := os.Getenv(envVar); envValue != "" {
