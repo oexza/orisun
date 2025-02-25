@@ -14,12 +14,14 @@ type UserProjector struct {
 	db         *sql.DB
 	logger     l.Logger
 	schema     string
-	eventStore pb.EventStoreClient
+	boundary   string
+	eventStore *pb.EventStore
 	username   string
 	password   string
 }
 
-func NewUserProjector(db *sql.DB, logger l.Logger, eventStore pb.EventStoreClient, schema string, username, password string) *UserProjector {
+func NewUserProjector(db *sql.DB, logger l.Logger, eventStore *pb.EventStore,
+	schema string, boundary string, username, password string) *UserProjector {
 	if schema == "" {
 		schema = "public"
 	}
@@ -27,6 +29,7 @@ func NewUserProjector(db *sql.DB, logger l.Logger, eventStore pb.EventStoreClien
 		db:         db,
 		logger:     logger,
 		schema:     schema,
+		boundary:   boundary,
 		eventStore: eventStore,
 		username:   username,
 		password:   password,
@@ -44,22 +47,19 @@ func (p *UserProjector) Start(ctx context.Context) error {
 		return err
 	}
 
+	stream := pb.NewCustomEventStream(ctx)
+
 	// Subscribe from last checkpoint
-	stream, err := p.eventStore.CatchUpSubscribeToEvents(ctx, &pb.CatchUpSubscribeToEventStoreRequest{
-		SubscriberName: "user_projector",
-		Boundary:       p.schema,
-		Position: &pb.Position{
+	err = p.eventStore.SubscribeToEvents(
+		ctx,
+		p.boundary,
+		"user_projector",
+		&pb.Position{
 			CommitPosition:  commitPos,
 			PreparePosition: preparePos,
 		},
-		Query: &pb.Query{
-			Criteria: []*pb.Criterion{
-				{
-					Tags: []*pb.Tag{},
-				},
-			},
-		},
-	},
+		nil,
+		stream,
 	)
 	if err != nil {
 		return err

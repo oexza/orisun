@@ -6,15 +6,13 @@ import (
 	"fmt"
 	"testing"
 
-	dbase "orisun/src/orisun/db"
 	"orisun/src/orisun/eventstore"
-	logging "orisun/src/orisun/logging"
+	"orisun/src/orisun/logging"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
-	config "orisun/src/orisun/config"
 )
 
 type PostgresContainer struct {
@@ -90,18 +88,9 @@ func TestSaveAndGetEvents(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	logger, err := logging.ZapLogger("debug")
-	require.NoError(t, err)
-
-	var boundaryToSchemaMappings = map[string]config.BoundaryToPostgresSchemaMapping{
-		"test_boundary": {
-			Schema:   "test_boundary",
-			Boundary: "test_boundary",
-		},
-	}
-
-	saveEvents := NewPostgresSaveEvents(db, &logger, boundaryToSchemaMappings)
-	getEvents := NewPostgresGetEvents(db, &logger, boundaryToSchemaMappings)
+	logger := logging.Logger{}
+	saveEvents := NewPostgresSaveEvents(db, &logger)
+	getEvents := NewPostgresGetEvents(db, &logger)
 
 	// Test saving events
 	events := []eventstore.EventWithMapTags{

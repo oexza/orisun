@@ -65,6 +65,10 @@ func GetEventsSubjectName(boundary string) string {
 	return GetEventsStreamName(boundary) + "." + EventsSubjectName
 }
 
+func GetEventSubjectName(boundary string, position *Position) string {
+	return GetEventsStreamName(boundary) + "." + EventsSubjectName + "." + GetEventNatsMessageId(int64(position.PreparePosition), int64(position.CommitPosition))
+}
+
 func NewEventStoreServer(
 	ctx context.Context,
 	js jetstream.JetStream,
@@ -89,7 +93,6 @@ func NewEventStoreServer(
 			MaxMsgs: 100,
 			// MaxAge:  5 * time.Minute,
 			// Storage: jetstream.MemoryStorage,
-		
 		})
 
 		if err != nil {
@@ -201,23 +204,30 @@ func (s *EventStore) GetEvents(ctx context.Context, req *GetEventsRequest) (*Get
 	return s.getEventsFn.Get(ctx, req)
 }
 
-func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreRequest, stream EventStore_CatchUpSubscribeToEventsServer) error {
-	ctx, cancel := context.WithCancel(stream.Context())
-	unlockFunc, err := s.lockProvider.Lock(ctx, req.Boundary+"__"+req.SubscriberName)
+type EventSubscriptionHandler interface {
+	Send(*Event) error
+	Context() context.Context
+}
+
+func (s *EventStore) SubscribeToEvents(
+	ctx context.Context,
+	boundary string,
+	subscriberName string,
+	position *Position,
+	query *Query,
+	handler EventSubscriptionHandler,
+) error {
+	unlockFunc, err := s.lockProvider.Lock(ctx, boundary+"__"+subscriberName)
 
 	if err != nil {
-		cancel()
 		return status.Errorf(codes.AlreadyExists, "failed to acquire lock: %v", err)
 	}
 
 	// Ensure cleanup happens in all cases
-	defer func() {
-		unlockFunc()
-		cancel()
-	}()
+	defer unlockFunc()
 
 	// Initialize position tracking
-	lastPosition := req.GetPosition()
+	lastPosition := position
 
 	// Process historical events
 	historicalDone := make(chan struct{})
@@ -230,9 +240,9 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 		lastPosition, lastTime, historicalErr = s.sendHistoricalEvents(
 			ctx,
 			lastPosition,
-			req.Query,
-			stream,
-			req.Boundary,
+			query,
+			handler,
+			boundary,
 		)
 
 		if historicalErr != nil {
@@ -259,13 +269,13 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 	}
 
 	// Set up NATS subscription for live events
-	subs, err := s.js.Stream(ctx, GetEventsStreamName(req.Boundary))
+	subs, err := s.js.Stream(ctx, GetEventsStreamName(boundary))
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to get stream: %v", err)
 	}
 
 	consumer, err := subs.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-		Name:          req.SubscriberName,
+		Name:          subscriberName,
 		DeliverPolicy: jetstream.DeliverByStartTimePolicy,
 		AckPolicy:     jetstream.AckNonePolicy,
 		MaxDeliver:    -1,
@@ -276,7 +286,7 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to create consumer: %v", err)
 	}
-	defer subs.DeleteConsumer(ctx, req.SubscriberName)
+	defer subs.DeleteConsumer(ctx, subscriberName)
 
 	// Start consuming messages with a done channel for cleanup
 	msgDone := make(chan struct{})
@@ -317,8 +327,8 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 
 				isNewer := isEventNewer(event.Position, lastPosition)
 
-				if isNewer && s.eventMatchesQueryCriteria(&event, req.Query) {
-					if err := stream.Send(&event); err != nil {
+				if isNewer && s.eventMatchesQueryCriteria(&event, query) {
+					if err := handler.Send(&event); err != nil {
 						logger.Errorf("Failed to send event: %v", err)
 						msg.Nak() // Negative acknowledgment to retry later
 						continue
@@ -345,6 +355,20 @@ func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreR
 		logger.Info("Message processing completed")
 		return nil
 	}
+}
+
+func (s *EventStore) CatchUpSubscribeToEvents(req *CatchUpSubscribeToEventStoreRequest, stream EventStore_CatchUpSubscribeToEventsServer) error {
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
+	return s.SubscribeToEvents(
+		ctx,
+		req.Boundary,
+		req.SubscriberName,
+		req.GetPosition(),
+		req.Query,
+		stream,
+	)
 }
 
 type ComparationResult int
@@ -377,7 +401,7 @@ func (s *EventStore) sendHistoricalEvents(
 	ctx context.Context,
 	fromPosition *Position,
 	query *Query,
-	stream EventStore_CatchUpSubscribeToEventsServer,
+	stream EventSubscriptionHandler,
 	boundary string) (*Position, time.Time, error) {
 
 	lastPosition := fromPosition
@@ -569,7 +593,7 @@ func (s *EventStore) PublishToPubSub(ctx context.Context, req *PublishRequest) (
 	return &emptypb.Empty{}, nil
 }
 
-func GetLastPublishedPosition(ctx context.Context, js jetstream.JetStream, boundary string) (*Position, error) {
+func GetLastPublishedPositionFromNats(ctx context.Context, js jetstream.JetStream, boundary string) (*Position, error) {
 	eventsStreamName := GetEventsStreamName(boundary)
 	stream, err := js.Stream(ctx, eventsStreamName)
 	if err != nil {
@@ -599,5 +623,5 @@ func GetLastPublishedPosition(ctx context.Context, js jetstream.JetStream, bound
 }
 
 func GetEventNatsMessageId(preparePosition int64, commitPosition int64) string {
-	return fmt.Sprintf("%d-%d", preparePosition, commitPosition)
+	return fmt.Sprintf("%d__%d", preparePosition, commitPosition)
 }

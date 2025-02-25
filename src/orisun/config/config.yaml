@@ -4,7 +4,7 @@ postgres:
   password: ${ORISUN_PG_PASSWORD:password@1}
   host: ${ORISUN_PG_HOST:localhost}
   port: ${ORISUN_PG_PORT:5432}
-  schemas: ${ORISUN_PG_SCHEMAS:orisun_test_1:public, orisun_test_2:orisun_postgres_test_2}
+  schemas: ${ORISUN_PG_SCHEMAS:`orisun_test_1:public,orisun_test_2:test2`}
 
 boundaries:
   - name: orisun_test_1
@@ -13,21 +13,22 @@ boundaries:
     description: boundary2
 
 grpc:
-  port: ${ORISUN_GRPC_PORT:5007}
+  port: ${ORISUN_GRPC_PORT:5005}
   enableReflection: ${ORISUN_GRPC_ENABLE_REFLECTION:true}
 nats:
+  serverName: ${ORISUN_NATS_SERVER_NAME:orisun-nats-2}
   port: ${ORISUN_NATS_PORT:4224}
   maxPayload: ${ORISUN_NATS_MAX_PAYLOAD:1048576}
-  storeDir: ${ORISUN_NATS_STORE_DIR:../data/orisun-nats-jetstream-z}
+  storeDir: ${ORISUN_NATS_STORE_DIR:../data/orisun2}
   cluster:
     name: ${ORISUN_NATS_CLUSTER_NAME:orisun-nats-cluster}
-    host: ${ORISUN_NATS_CLUSTER_HOST:localhost}
-    port: ${ORISUN_NATS_CLUSTER_PORT:6224}
+    host: ${ORISUN_NATS_CLUSTER_HOST:0.0.0.0}
+    port: ${ORISUN_NATS_CLUSTER_PORT:6222}
     username: ${ORISUN_NATS_CLUSTER_USERNAME:nats}
     password: ${ORISUN_NATS_CLUSTER_PASSWORD:password@1}
     enabled: ${ORISUN_NATS_CLUSTER_ENABLED:false}
     timeout: ${ORISUN_NATS_CLUSTER_TIMEOUT:1800s}
-    routes: ${ORISUN_NATS_CLUSTER_ROUTES:`nats://localhost:6222`,`nats://localhost:6223`}
+    routes: ${ORISUN_NATS_CLUSTER_ROUTES:`nats://0.0.0.0:6223,nats://0.0.0.0:6224`}
 pollingPublisher:
   batchSize: ${ORISUN_POLLING_PUBLISHER_BATCH_SIZE:1000}
 logging:
@@ -40,5 +41,6 @@ auth:
 
 # Add to existing config:
 admin:
-  port: ${ORISUN_ADMIN_PORT:8997}
+  port: ${ORISUN_ADMIN_PORT:8991}
   schema: ${ORISUN_ADMIN_SCHEMA:public}
+  boundary: ${ORISUN_ADMIN_BOUNDARY:orisun_test_1}

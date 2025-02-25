@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"orisun/src/orisun/logging"
 	"strings"
@@ -43,8 +44,7 @@ type PostgresSaveEvents struct {
 	boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping
 }
 
-func NewPostgresSaveEvents(db *sql.DB, logger *logging.Logger,
-	boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping) *PostgresSaveEvents {
+func NewPostgresSaveEvents(db *sql.DB, logger *logging.Logger, boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping) *PostgresSaveEvents {
 	return &PostgresSaveEvents{db: db, logger: *logger, boundarySchemaMappings: boundarySchemaMappings}
 }
 
@@ -100,12 +100,12 @@ func (s *PostgresSaveEvents) Save(
 
 	var schema = s.boundarySchemaMappings[boundary].Schema
 
-	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
-	if err != nil {
-		return "", 0, status.Errorf(codes.Internal, "failed to set search path: %v", err)
-	}
+	// _, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
+	// if err != nil {
+	// 	return "", 0, status.Errorf(codes.Internal, "failed to set search path: %v", err)
+	// }
 
-	s.logger.Debugf("insertEventsWithConsistency: %s", &streamSubsetQueryJSON)
+	s.logger.Debugf("insertEventsWithConsistency: %s", schema)
 	row := tx.QueryRowContext(
 		ctx,
 		fmt.Sprintf(insertEventsWithConsistency, schema),
@@ -143,6 +143,8 @@ func (s *PostgresSaveEvents) Save(
 }
 
 func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRequest) (*eventstore.GetEventsResponse, error) {
+	s.logger.Debugf("Getting events from database: %v for schema", req)
+
 	var fromPosition *map[string]uint64
 
 	if req.FromPosition != nil && req.FromPosition != (&eventstore.Position{}) {
@@ -160,6 +162,7 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	}
 
 	if len(criteriaList) > 0 {
+		s.logger.Debugf("criteriaList: %v", criteriaList)
 		globalQuery = &map[string]interface{}{
 			"criteria": criteriaList,
 		}
@@ -188,7 +191,7 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	s.logger.Debugf("direction: %v", req.Direction.String())
 	s.logger.Debugf("count: %v", req.Count)
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to begin transaction: %v", err)
 	}
@@ -196,7 +199,7 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 
 	var schema = s.boundarySchemaMappings[req.Boundary].Schema
 
-	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
+	_, err = tx.Exec(fmt.Sprintf(setSearchPath, schema))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to set search path: %v", err)
 	}
@@ -211,8 +214,7 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		return nil, status.Errorf(codes.Internal, "failed to set log_statement: %v", err)
 	}
 	exec.RowsAffected()
-	rows, err := tx.QueryContext(
-		ctx,
+	rows, err := tx.Query(
 		selectMatchingEvents,
 		streamName,
 		paramsJSON,
@@ -221,6 +223,8 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		req.Count,
 	)
 	if err != nil {
+		s.logger.Debugf("Naaaax: %v boundary: %v", req.FromPosition, req.Boundary)
+
 		return nil, status.Errorf(codes.Internal, "failed to execute query: %v", err)
 	}
 
@@ -395,22 +399,36 @@ func PollEventsFromPgToNats(
 			Direction:    eventstore.Direction_ASC,
 			Boundary:     boundary,
 		}
-		resp, err := eventStore.Get(ctx, req)
+		resp, err := eventStore.Get(context.Background(), req)
 		if err != nil {
+			logger.Errorf("Error retrieving events: %v", err)
 			return fmt.Errorf("failed to get events: %v", err)
 		}
 
-		logger.Debugf("Got %d events", len(resp.Events))
+		logger.Debugf("Got %d events for boundary %v", len(resp.Events), boundary)
 
 		for _, event := range resp.Events {
+			subjectName := eventstore.GetEventSubjectName(
+				boundary,
+				&eventstore.Position{
+					CommitPosition:  event.Position.CommitPosition,
+					PreparePosition: event.Position.PreparePosition,
+				},
+			)
+			logger.Debugf("Subject name is: %s", subjectName)
 			eventData, err := json.Marshal(event)
 			if err != nil {
 				logger.Errorf("Failed to marshal event: %v", err)
 				continue
 			}
 			publishEventWithRetry(
-				ctx, js, eventData, eventstore.GetEventsSubjectName(boundary),
-				logger, event.Position.PreparePosition, event.Position.CommitPosition,
+				ctx,
+				js,
+				eventData,
+				subjectName,
+				logger,
+				event.Position.PreparePosition,
+				event.Position.CommitPosition,
 			)
 		}
 
@@ -452,4 +470,62 @@ func publishEventWithRetry(ctx context.Context, js jetstream.JetStream, eventDat
 		backoff = nextBackoff
 		attempt++
 	}
+}
+
+type PGLockProvider struct {
+	db     *sql.DB
+	logger logging.Logger
+}
+
+func NewPGLockProvider(db *sql.DB, logger logging.Logger) *PGLockProvider {
+	return &PGLockProvider{
+		db:     db,
+		logger: logger,
+	}
+}
+
+func (m *PGLockProvider) Lock(ctx context.Context, lockName string) (eventstore.UnlockFunc, error) {
+	m.logger.Debug("Lock called for: %v", lockName)
+	conn, err := m.db.Conn(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
+
+	if err != nil {
+		return nil, err
+	}
+
+	hash := sha256.Sum256([]byte(lockName))
+	lockID := int64(binary.BigEndian.Uint64(hash[:]))
+
+	var acquired bool
+
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, lockName))
+	if err != nil {
+		return nil, fmt.Errorf("failed to set search path: %v", err)
+	}
+	err = tx.QueryRowContext(ctx, "SELECT pg_try_advisory_xact_lock($1)", int32(lockID)).Scan(&acquired)
+
+	if err != nil {
+		m.logger.Errorf("Failed to acquire lock: %v, will retry", err)
+		return nil, err
+	}
+
+	if !acquired {
+		m.logger.Warnf("Failed to acquire lock within timeout")
+		return nil, errors.New("lock acquisition timed out")
+	}
+
+	unlockFunc := func() error {
+		fmt.Printf("Unlock called for: %s", lockName)
+		defer conn.Close()
+		defer tx.Rollback()
+
+		return nil
+	}
+
+	return unlockFunc, nil
 }

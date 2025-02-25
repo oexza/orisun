@@ -27,6 +27,7 @@ type AppConfig struct {
 		Level   string // e.g., "debug", "info", "warn", "error"
 	}
 	Nats struct {
+		ServerName     string
 		Port           int
 		MaxPayload     int32
 		MaxConnections int
@@ -39,8 +40,9 @@ type AppConfig struct {
 		AdminPassword string
 	}
 	Admin struct {
-		Port   string
-		Schema string
+		Port     string
+		Schema   string
+		Boundary string
 	}
 }
 
