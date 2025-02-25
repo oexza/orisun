@@ -442,34 +442,23 @@ func PollEventsFromPgToNats(
 
 func publishEventWithRetry(ctx context.Context, js jetstream.JetStream, eventData []byte,
 	subjectName string, logger logging.Logger, preparePosition uint64, commitPosition uint64) {
-	backoff := time.Second
-	maxBackoff := time.Minute * 5
+
 	attempt := 1
 
-	for {
-		pubOpts := jetstream.PublishOpt(
-			jetstream.WithMsgID(eventstore.GetEventNatsMessageId(int64(preparePosition), int64(commitPosition))),
-		)
-		_, err := js.Publish(ctx, subjectName, eventData, pubOpts)
-		if err == nil {
-			logger.Debugf("Successfully published event after %d attempts", attempt)
-			return
-		}
+	messageIdOpts := jetstream.PublishOpt(
+		jetstream.WithMsgID(eventstore.GetEventNatsMessageId(int64(preparePosition), int64(commitPosition))),
+	)
+	retryOpts := jetstream.WithRetryAttempts(999999999999)
 
-		logger.Errorf("Failed to publish event (attempt %d): %v", attempt, err)
-
-		// Calculate next backoff duration
-		nextBackoff := backoff * 2
-		if nextBackoff > maxBackoff {
-			nextBackoff = maxBackoff
-		}
-
-		logger.Infof("Retrying in %v", backoff)
-		time.Sleep(backoff)
-
-		backoff = nextBackoff
-		attempt++
+	_, err := js.Publish(ctx, subjectName, eventData, messageIdOpts, retryOpts)
+	if err == nil {
+		logger.Debugf("Successfully published event after %d attempts", attempt)
+		return
 	}
+
+	logger.Errorf("Failed to publish event (attempt %d): ", err)
+
+	publishEventWithRetry(ctx, js, eventData, subjectName, logger, preparePosition, commitPosition)
 }
 
 type PGLockProvider struct {

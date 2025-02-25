@@ -50,7 +50,7 @@ type EventStore struct {
 
 const (
 	eventsStreamPrefix          = "ORISUN_EVENTS"
-	EventsSubjectName           = "EVENTS"
+	EventsSubjectName           = "events"
 	pubsubPrefix                = "orisun_pubsub__"
 	activeSubscriptionsKVBucket = "ACTIVE_SUBSCRIPTIONS"
 )
@@ -62,7 +62,7 @@ func GetEventsStreamName(boundary string) string {
 }
 
 func GetEventsSubjectName(boundary string) string {
-	return GetEventsStreamName(boundary) + "." + EventsSubjectName
+	return GetEventsStreamName(boundary) + "." + EventsSubjectName + ".*"
 }
 
 func GetEventSubjectName(boundary string, position *Position) string {
@@ -275,7 +275,7 @@ func (s *EventStore) SubscribeToEvents(
 	}
 
 	consumer, err := subs.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-		Name:          subscriberName,
+		// Name:          subscriberName,
 		DeliverPolicy: jetstream.DeliverByStartTimePolicy,
 		AckPolicy:     jetstream.AckNonePolicy,
 		MaxDeliver:    -1,
@@ -623,5 +623,5 @@ func GetLastPublishedPositionFromNats(ctx context.Context, js jetstream.JetStrea
 }
 
 func GetEventNatsMessageId(preparePosition int64, commitPosition int64) string {
-	return fmt.Sprintf("%d__%d", preparePosition, commitPosition)
+	return fmt.Sprintf("%d%d", preparePosition, commitPosition)
 }
