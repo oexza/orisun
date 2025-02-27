@@ -137,7 +137,7 @@ func TestSaveAndGetEvents(t *testing.T) {
 		Boundary:  "test_boundary",
 		Direction: eventstore.Direction_ASC,
 		Count:     10,
-		Stream: &eventstore.SaveStreamQuery{
+		Stream: &eventstore.GetStreamQuery{
 			Name: "test-stream",
 		},
 	})

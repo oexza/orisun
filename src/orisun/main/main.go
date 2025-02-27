@@ -66,11 +66,11 @@ func main() {
 	// Start polling events
 	startEventPolling(ctx, config, db, js, postgesBoundarySchemaMappings)
 
+	// Start admin server
+	startAdminServer(config, db, eventStore)
+
 	// Start projectors
 	startProjectors(config.Admin.Boundary, config, eventStore, db)
-
-		// Start admin server
-	startAdminServer(config, db, eventStore)
 
 	// Start gRPC server
 	startGRPCServer(config, eventStore)
@@ -95,7 +95,7 @@ func initializeConfig() *c.AppConfig {
 func initializeDatabase(config *c.AppConfig) *sql.DB {
 	db, err := sql.Open(
 		"postgres", fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		config.Postgres.Host, config.Postgres.Port, config.Postgres.User, config.Postgres.Password, config.Postgres.Name))
+			config.Postgres.Host, config.Postgres.Port, config.Postgres.User, config.Postgres.Password, config.Postgres.Name))
 	if err != nil {
 		AppLogger.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -268,9 +268,12 @@ func startEventPolling(ctx context.Context, config *c.AppConfig, db *sql.DB, js 
 	}
 }
 
-func startAdminServer(config *c.AppConfig, db *sql.DB, eventStore pb.EventStoreServer) {
+func startAdminServer(config *c.AppConfig, db *sql.DB, eventStore *pb.EventStore) {
 	go func() {
-		adminServer := admin.NewAdminServer(db, AppLogger, eventStore, config.Admin.Schema)
+		adminServer, err := admin.NewAdminServer(db, AppLogger, eventStore, config.Admin.Schema, config.Admin.Boundary)
+		if err != nil {
+			AppLogger.Fatalf("Could not start admin server %v", err)
+		}
 		httpServer := &http.Server{
 			Addr:    fmt.Sprintf(":%s", config.Admin.Port),
 			Handler: adminServer,

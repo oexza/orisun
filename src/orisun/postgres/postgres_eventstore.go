@@ -31,7 +31,7 @@ SELECT * FROM %s.insert_events_with_consistency($1::jsonb, $2::jsonb, $3::jsonb)
 `
 
 const selectMatchingEvents = `
-SELECT * FROM get_matching_events($1, $2::jsonb, $3::jsonb, $4, $5)
+SELECT * FROM %s.get_matching_events($1, $2::INT, $3::jsonb, $4::jsonb, $5, $6::INT)
 `
 
 const setSearchPath = `
@@ -100,10 +100,10 @@ func (s *PostgresSaveEvents) Save(
 
 	var schema = s.boundarySchemaMappings[boundary].Schema
 
-	// _, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
-	// if err != nil {
-	// 	return "", 0, status.Errorf(codes.Internal, "failed to set search path: %v", err)
-	// }
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
+	if err != nil {
+		return "", 0, status.Errorf(codes.Internal, "failed to set search path: %v", err)
+	}
 
 	s.logger.Debugf("insertEventsWithConsistency: %s", schema)
 	row := tx.QueryRowContext(
@@ -145,7 +145,7 @@ func (s *PostgresSaveEvents) Save(
 func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRequest) (*eventstore.GetEventsResponse, error) {
 	s.logger.Debugf("Getting events from database: %v for schema", req)
 
-	var fromPosition *map[string]uint64
+	var fromPosition *map[string]uint64 = nil
 
 	if req.FromPosition != nil && req.FromPosition != (&eventstore.Position{}) {
 		fromPosition = &map[string]uint64{
@@ -178,17 +178,22 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		}
 		stringJson := string(paramsString)
 		paramsJSON = &stringJson
+
+		s.logger.Debugf("paramsJson: %v", stringJson)
 	}
 
 	var streamName *string = nil
+	var fromStreamVersion *uint32 = nil
+
 	if req.Stream != nil {
 		streamName = &req.Stream.Name
-	} else {
-		streamName = nil
+		if req.Stream.FromVersion != 0 {
+			fromStreamVersion = &req.Stream.FromVersion
+		}
 	}
 
 	s.logger.Debugf("params: %v", paramsJSON)
-	s.logger.Debugf("direction: %v", req.Direction.String())
+	s.logger.Debugf("direction: %v", req.Direction)
 	s.logger.Debugf("count: %v", req.Count)
 
 	tx, err := s.db.Begin()
@@ -204,9 +209,13 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		return nil, status.Errorf(codes.Internal, "failed to set search path: %v", err)
 	}
 
-	fromPositionMarshaled, err := json.Marshal(fromPosition)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to marshal from position: %v", err)
+	var fromPositionMarshaled *[]byte = nil
+	if(fromPosition!= nil) {
+		fromPositionJson, err := json.Marshal(fromPosition)
+		if err!= nil {
+			return nil, status.Errorf(codes.Internal, "failed to marshal from position: %v", err)
+		}
+		fromPositionMarshaled = &fromPositionJson
 	}
 
 	exec, err := tx.Exec("SET log_statement = 'all';")
@@ -215,8 +224,9 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	}
 	exec.RowsAffected()
 	rows, err := tx.Query(
-		selectMatchingEvents,
+		fmt.Sprintf(selectMatchingEvents, schema),
 		streamName,
+		fromStreamVersion,
 		paramsJSON,
 		fromPositionMarshaled,
 		req.Direction.String(),

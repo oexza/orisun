@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Project Status
-Orisun is currently in beta. While it's being used in production by several organizations, the API may undergo breaking changes before reaching v1.0.0. We follow semantic versioning.
+Orisun is currently in beta. While it's being used in production, the API may undergo breaking changes before reaching v1.0.0. We follow semantic versioning.
 
 ## Description
 Orisun is a batteries-included event store, with an embedded NATS JetStream server and PostgreSQL support. It provides a reliable, scalable event store with built-in pub/sub capabilities, making it ideal for event-driven architectures and CQRS applications. Built with extensibility in mind, Orisun's modular architecture allows for different storage backends, with plans to support additional databases beyond PostgreSQL in future releases.

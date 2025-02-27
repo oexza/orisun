@@ -3,7 +3,9 @@
 
 <head>
     <title>Orisun User Management</title>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script type="module"
+        src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.8/bundles/datastar.js"></script>
+
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -82,8 +84,7 @@
 <body>
     <h1>Orisun User Management</h1>
 
-    <form hx-post="/admin/users" hx-swap="none"
-        hx-on:htmx:after-request="document.querySelector('#users-container').dispatchEvent(new Event('load'))">
+    <form >
         <div class="form-group">
             <label for="username">Username:</label>
             <input type="text" name="username" required>
@@ -106,7 +107,7 @@
     <div id="message"></div>
 
     <h2>Users</h2>
-    <div id="users-container" hx-get="/admin/users/list" hx-trigger="load">
+    <div id="users-container">
         <!-- User list will be loaded here -->
     </div>
 </body>

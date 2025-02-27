@@ -109,9 +109,9 @@ func (p *UserProjector) handleEvent(event *pb.Event) error {
 
 		rolesStr := "{" + strings.Join(userEvent.Roles, ",") + "}"
 		_, err = tx.Exec(
-			fmt.Sprintf("INSERT INTO %s.users (username, password_hash, roles) VALUES ($1, $2, $3)",
+			fmt.Sprintf("INSERT INTO %s.users (id, username, password_hash, roles) VALUES ($1, $2, $3, $4)",
 				p.schema),
-			userEvent.Username, userEvent.PasswordHash, rolesStr,
+			userEvent.UserId, userEvent.Username, userEvent.PasswordHash, rolesStr,
 		)
 
 	case EventTypeUserDeleted:
@@ -120,9 +120,9 @@ func (p *UserProjector) handleEvent(event *pb.Event) error {
 			return err
 		}
 		_, err = tx.Exec(
-			fmt.Sprintf("DELETE FROM %s.users WHERE username = $1",
+			fmt.Sprintf("DELETE FROM %s.users WHERE id = $1",
 				p.schema),
-			userEvent.Username,
+			userEvent.UserId,
 		)
 
 		// case EventTypeRolesChanged:

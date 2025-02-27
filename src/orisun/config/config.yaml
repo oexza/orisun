@@ -19,7 +19,7 @@ nats:
   serverName: ${ORISUN_NATS_SERVER_NAME:orisun-nats-2}
   port: ${ORISUN_NATS_PORT:4224}
   maxPayload: ${ORISUN_NATS_MAX_PAYLOAD:1048576}
-  storeDir: ${ORISUN_NATS_STORE_DIR:../data/orisun2}
+  storeDir: ${ORISUN_NATS_STORE_DIR:../data/orisun}
   cluster:
     name: ${ORISUN_NATS_CLUSTER_NAME:orisun-nats-cluster}
     host: ${ORISUN_NATS_CLUSTER_HOST:0.0.0.0}
@@ -43,4 +43,4 @@ auth:
 admin:
   port: ${ORISUN_ADMIN_PORT:8991}
   schema: ${ORISUN_ADMIN_SCHEMA:public}
-  boundary: ${ORISUN_ADMIN_BOUNDARY:orisun_test_1}
+  boundary: ${ORISUN_ADMIN_BOUNDARY:orisun_test_2}

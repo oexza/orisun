@@ -159,6 +159,7 @@ $$;
 -- Query Function
 CREATE OR REPLACE FUNCTION get_matching_events(
     stream_name TEXT DEFAULT NULL,
+    from_stream_version INT DEFAULT NULL,
     criteria JSONB DEFAULT NULL,
     after_position JSONB DEFAULT NULL,
     sort_dir TEXT DEFAULT 'ASC',
@@ -176,7 +177,8 @@ BEGIN
         $q$
         SELECT * FROM orisun_es_event
         WHERE 
-            (%1$L IS NULL OR stream_name = %2$L) AND
+            (%1$L IS NULL OR stream_name = %1$L) AND
+            (%2$L IS NULL OR stream_version %4$s %2$L) AND
             (%3$L IS NULL OR 
              (transaction_id, global_id) %4$s (
                 %5$L::xid8, 
@@ -189,7 +191,7 @@ BEGIN
         LIMIT %9$L
         $q$,
         stream_name,
-        stream_name,
+        from_stream_version,
         after_position,
         op,
         (after_position->>'transaction_id')::text,

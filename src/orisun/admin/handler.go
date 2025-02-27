@@ -13,28 +13,29 @@ import (
 	l "orisun/src/orisun/logging"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	// datastar "github.com/starfederation/datastar/sdk/go"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type contextKey string
 
 const (
-	contextKeyUser = contextKey("user")
-)
-
-const (
-	userTag = "user"
+	contextKeyUser   = contextKey("user")
+	userStreamPrefix = "User-Registration:::::"
+	registrationTag  = "Registration"
+	usernameTag      = "Registration_username"
 )
 
 type AdminServer struct {
 	db         *sql.DB
 	logger     l.Logger
 	tmpl       *template.Template
-	mux        *http.ServeMux
-	eventStore pb.EventStoreServer
-	schema     string
+	router     *chi.Mux
+	eventStore *pb.EventStore
+	boundary   string
 }
 
 type User struct {
@@ -42,47 +43,74 @@ type User struct {
 	Roles    []string
 }
 
-func NewAdminServer(db *sql.DB, logger l.Logger, eventStore pb.EventStoreServer, schema string) *AdminServer {
+func NewAdminServer(db *sql.DB, logger l.Logger, eventStore *pb.EventStore, schema string, boundary string) (*AdminServer, error) {
 	funcMap := template.FuncMap{
 		"join": strings.Join,
 	}
 
 	tmpl := template.Must(template.New("").Funcs(funcMap).ParseFS(content, "templates/*.html"))
 
+	router := chi.NewRouter()
+
 	server := &AdminServer{
 		db:         db,
 		logger:     logger,
 		tmpl:       tmpl,
-		mux:        http.NewServeMux(),
+		router:     router,
 		eventStore: eventStore,
-		schema:     schema,
+		boundary:   boundary,
+	}
+
+	events, err := eventStore.GetEvents(
+		context.Background(),
+		&pb.GetEventsRequest{
+			Boundary: boundary,
+			Count:    1,
+			Direction: pb.Direction_DESC,
+			Query: &pb.Query{
+				Criteria: []*pb.Criterion{
+					{
+						Tags: []*pb.Tag{
+							{Key: usernameTag, Value: "admin"},
+							{Key: "eventType", Value: EventTypeUserCreated},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Debugf("events from handler: %v", events)
+
+	if len(events.Events) == 0 {
+		err := server.createUser(
+			"admin", "changeit", []string{"admin"},
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Register routes
-	server.mux.HandleFunc("/admin/users", server.handleUsers)
-	server.mux.HandleFunc("/admin/users/list", server.handleUsersList)
-	server.mux.HandleFunc("/admin/users/", server.handleUserDelete)
+	router.Route("/admin", func(r chi.Router) {
+		r.Get("/users", server.handleUsers)
+		r.Post("/users", server.handleCreateUser)
+		r.Get("/users/list", server.handleUsersList)
+		r.Delete("/users/{username}", server.handleUserDelete)
+	})
 
-	return server
+	return server, nil
 }
 
 func (s *AdminServer) handleUsers(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.tmpl.ExecuteTemplate(w, "users.html", nil)
-	case http.MethodPost:
-		s.handleCreateUser(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
+	s.tmpl.ExecuteTemplate(w, "users.html", nil)
 }
 
 func (s *AdminServer) handleUsersList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	users, err := s.listUsers()
 	if err != nil {
 		http.Error(w, "Failed to list users", http.StatusInternalServerError)
@@ -130,36 +158,24 @@ func (s *AdminServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *AdminServer) handleUserDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) != 4 {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-
-	username := parts[3]
+	userId := chi.URLParam(r, "userId")
 	currentUser := "r.Context().Value(contextKeyUser).(string)"
 
-	if username == currentUser {
+	if userId == currentUser {
 		http.Error(w, "Cannot delete your own account", http.StatusBadRequest)
 		return
 	}
 
-	if err := s.deleteUser(username); err != nil {
+	if err := s.deleteUser(userId); err != nil {
 		http.Error(w, "Failed to delete user "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Return empty response as the element will be removed
 	w.WriteHeader(http.StatusOK)
 }
 
 func (s *AdminServer) listUsers() ([]User, error) {
-	rows, err := s.db.Query("SELECT username, roles FROM users ORDER BY username")
+	rows, err := s.db.Query("SELECT id, username, roles FROM users ORDER BY username")
 	if err != nil {
 		return nil, err
 	}
@@ -179,31 +195,31 @@ func (s *AdminServer) listUsers() ([]User, error) {
 }
 
 func (s *AdminServer) createUser(username, password string, roles []string) error {
+	username = strings.TrimSpace(username)
 	// Hash password
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
 
-	events, err := s.eventStore.GetEvents(context.Background(), &pb.GetEventsRequest{
-		Boundary:  s.schema,
-		Direction: pb.Direction_DESC,
-		Count:     1,
-		FromPosition: &pb.Position{
-			PreparePosition: 999999999999999999,
-			CommitPosition:  999999999999999999,
-		},
-		Query: &pb.Query{
-			Criteria: []*pb.Criterion{
-				{
-					Tags: []*pb.Tag{
-						{Key: userTag, Value: username},
-						{Key: "eventType", Value: EventTypeUserCreated},
+	events, err := s.eventStore.GetEvents(
+		context.Background(),
+		&pb.GetEventsRequest{
+			Boundary:  s.boundary,
+			Direction: pb.Direction_DESC,
+			Count:     1,
+			Query: &pb.Query{
+				Criteria: []*pb.Criterion{
+					{
+						Tags: []*pb.Tag{
+							{Key: usernameTag, Value: username},
+							{Key: "eventType", Value: EventTypeUserCreated},
+						},
 					},
 				},
 			},
 		},
-	})
+	)
 
 	if err != nil {
 		return err
@@ -212,14 +228,46 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 	s.logger.Debugf("events: %v", events)
 
 	if len(events.Events) > 0 {
-		return fmt.Errorf("user already exists")
+		event := events.Events[0]
+		var userCreatedEvent = UserCreated{}
+
+		err := json.Unmarshal([]byte(event.Data), &UserCreated{})
+		if err != nil {
+			return err
+		}
+		events, err := s.eventStore.GetEvents(
+			context.Background(),
+			&pb.GetEventsRequest{
+				Boundary:  s.boundary,
+				Direction: pb.Direction_DESC,
+				Count:     1,
+				Stream:    &pb.GetStreamQuery{Name: userStreamPrefix + userCreatedEvent.UserId},
+				Query: &pb.Query{
+					Criteria: []*pb.Criterion{
+						{
+							Tags: []*pb.Tag{
+								{Key: "eventType", Value: EventTypeUserDeleted},
+							},
+						},
+					},
+				},
+			},
+		)
+		if len(events.Events) == 0 {
+			return fmt.Errorf("error: user already exists")
+		}
 	}
 
+	userId, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
 	// Create user created event
 	event := UserCreated{
 		Username:     username,
 		Roles:        roles,
 		PasswordHash: string(hash),
+		UserId:       userId.String(),
 	}
 
 	eventData, err := json.Marshal(event)
@@ -227,90 +275,107 @@ func (s *AdminServer) createUser(username, password string, roles []string) erro
 		return err
 	}
 
-	// Store event
-	id, err := uuid.NewV7()
-	if err != nil {
-		return err
-	}
-	consistencyCondition := pb.IndexLockCondition{
-		ConsistencyMarker: &pb.Position{
-			PreparePosition: 00,
-			CommitPosition:  00,
-		},
-		Query: &pb.Query{
-			Criteria: []*pb.Criterion{
-				{
-					Tags: []*pb.Tag{
-						{Key: userTag, Value: username},
-						{Key: "eventType", Value: EventTypeUserCreated},
-					},
-				},
-			},
-		},
-	}
-	_, err = s.eventStore.SaveEvents(context.Background(), &pb.SaveEventsRequest{
-		Boundary:             s.schema,
-		ConsistencyCondition: &consistencyCondition,
-		Events: []*pb.EventToSave{
-			{
-				EventId:   id.String(),
-				EventType: EventTypeUserCreated,
-				Data:      string(eventData),
-				Tags: []*pb.Tag{
-					{Key: userTag, Value: username},
-				},
-				Metadata: "{\"schema\":\"" + s.schema + "\",\"createdBy\":\"" + id.String() + "\"}",
-			},
-		},
-	})
-
-	return err
-}
-
-func (s *AdminServer) deleteUser(username string) error {
-	event := UserDeleted{
-		Username: username,
-	}
-
-	eventData, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
 
-	// Store event
-	id, err := uuid.NewV7()
+	eventId, err := uuid.NewV7()
 	if err != nil {
 		return err
 	}
 	_, err = s.eventStore.SaveEvents(context.Background(), &pb.SaveEventsRequest{
-		Boundary: s.schema,
+		Boundary: s.boundary,
 		ConsistencyCondition: &pb.IndexLockCondition{
 			ConsistencyMarker: &pb.Position{
-				PreparePosition: 999999999999999999,
-				CommitPosition:  999999999999999999,
+				PreparePosition: 0,
+				CommitPosition:  0,
 			},
 			Query: &pb.Query{
 				Criteria: []*pb.Criterion{
 					{
-						Tags: []*pb.Tag{},
+						Tags: []*pb.Tag{
+							{Key: usernameTag, Value: username},
+						},
 					},
 				},
 			},
 		},
-		Events: []*pb.EventToSave{{
-			EventId:   id.String(),
-			EventType: EventTypeUserDeleted,
-			Data:      string(eventData),
-			Tags: []*pb.Tag{
-				{Key: userTag, Value: username},
+		Events: []*pb.EventToSave{
+			{
+				EventId:   eventId.String(),
+				EventType: EventTypeUserCreated,
+				Data:      string(eventData),
+				Tags: []*pb.Tag{
+					{Key: usernameTag, Value: username},
+					{Key: registrationTag, Value: userId.String()},
+				},
+				Metadata: "{\"schema\":\"" + s.boundary + "\",\"createdBy\":\"" + (userId).String() + "\"}",
 			},
-			Metadata: "{\"schema\":\"" + s.schema + "\",\"createdBy\":\"" + id.String() + "\"}",
-		}},
+		},
+		Stream: &pb.SaveStreamQuery{
+			Name: userStreamPrefix + userId.String(),
+		},
 	})
 
 	return err
 }
 
+func (s *AdminServer) deleteUser(userId string) error {
+	userId = strings.TrimSpace(userId)
+	events, err := s.eventStore.GetEvents(
+		context.Background(),
+		&pb.GetEventsRequest{
+			Boundary:  s.boundary,
+			Direction: pb.Direction_DESC,
+			Count:     1,
+			Stream: &pb.GetStreamQuery{
+				Name: userStreamPrefix + userId,
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	if len(events.Events) > 0 {
+		if events.Events[0].EventType == EventTypeUserDeleted {
+			return fmt.Errorf("error: user already deleted")
+		}
+
+		event := UserDeleted{
+			UserId: userId,
+		}
+
+		eventData, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+
+		// Store event
+		id, err := uuid.NewV7()
+		if err != nil {
+			return err
+		}
+		_, err = s.eventStore.SaveEvents(context.Background(), &pb.SaveEventsRequest{
+			Boundary:             s.boundary,
+			ConsistencyCondition: nil,
+			Stream: &pb.SaveStreamQuery{
+				Name: userStreamPrefix + userId,
+			},
+			Events: []*pb.EventToSave{{
+				EventId:   id.String(),
+				EventType: EventTypeUserDeleted,
+				Data:      string(eventData),
+				Tags: []*pb.Tag{
+					{Key: registrationTag, Value: userId},
+				},
+				Metadata: "{\"schema\":\"" + s.boundary + "\",\"createdBy\":\"" + id.String() + "\"}",
+			}},
+		})
+	}
+	return fmt.Errorf("error: user not found")
+}
+
 func (s *AdminServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	s.router.ServeHTTP(w, r)
 }

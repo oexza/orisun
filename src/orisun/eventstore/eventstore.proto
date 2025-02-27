@@ -85,7 +85,7 @@ message GetEventsRequest {
   int32 count = 3;
   Direction direction = 4;
   string boundary = 5;
-  SaveStreamQuery stream = 6;
+  GetStreamQuery stream = 6;
 }
 
 message GetEventsResponse {
