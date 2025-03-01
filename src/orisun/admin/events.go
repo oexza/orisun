@@ -11,7 +11,7 @@ const (
 type UserCreated struct {
 	UserId       string   `json:"user_id"`
 	Username     string   `json:"username"`
-	Roles        []string `json:"roles,omitempty"`
+	Roles        []Role `json:"roles,omitempty"`
 	PasswordHash string   `json:"password_hash,omitempty"`
 }
 

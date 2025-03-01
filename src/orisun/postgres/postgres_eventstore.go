@@ -16,10 +16,15 @@ import (
 
 	config "orisun/src/orisun/config"
 
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	admin "orisun/src/orisun/admin"
+
+	"github.com/lib/pq"
 )
 
 const (
@@ -143,7 +148,7 @@ func (s *PostgresSaveEvents) Save(
 }
 
 func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRequest) (*eventstore.GetEventsResponse, error) {
-	s.logger.Debugf("Getting events from database: %v for schema", req)
+	s.logger.Debugf("Getting events from request: %v", req)
 
 	var fromPosition *map[string]uint64 = nil
 
@@ -210,9 +215,9 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 	}
 
 	var fromPositionMarshaled *[]byte = nil
-	if(fromPosition!= nil) {
+	if fromPosition != nil {
 		fromPositionJson, err := json.Marshal(fromPosition)
-		if err!= nil {
+		if err != nil {
 			return nil, status.Errorf(codes.Internal, "failed to marshal from position: %v", err)
 		}
 		fromPositionMarshaled = &fromPositionJson
@@ -348,53 +353,13 @@ func getCriteriaAsList(query *eventstore.Query) []map[string]interface{} {
 
 func PollEventsFromPgToNats(
 	ctx context.Context,
-	db *sql.DB,
 	js jetstream.JetStream,
-	eventStore *PostgresGetEvents,
+	eventStore eventstore.GetEvents,
 	batchSize int32,
 	lastPosition *eventstore.Position,
 	logger logging.Logger,
 	boundary string,
-	schema string) error {
-
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get database connection: %v", err)
-	}
-	defer conn.Close()
-
-	// Begin a transaction
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %v", err)
-	}
-	defer tx.Rollback()
-
-	// Try to acquire the lock with retries
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		hash := sha256.Sum256([]byte(boundary))
-		lockID := int64(binary.BigEndian.Uint64(hash[:]))
-
-		_, err = tx.ExecContext(ctx, fmt.Sprintf(setSearchPath, schema))
-		if err != nil {
-			return fmt.Errorf("failed to set search path: %v", err)
-		}
-
-		err = tx.QueryRowContext(ctx, "SELECT pg_advisory_xact_lock($1)", lockID).Err()
-		if err != nil {
-			logger.Errorf("Failed to acquire lock: %v, will retry", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		logger.Infof("Successfully acquired polling lock for %v", boundary)
-		break
-	}
-
+) error {
 	// Start polling loop
 	for {
 		if ctx.Err() != nil {
@@ -446,7 +411,7 @@ func PollEventsFromPgToNats(
 			lastPosition = resp.Events[len(resp.Events)-1].Position
 		}
 		logger.Debugf(":%v Sleeping.....", boundary)
-		time.Sleep(1 * time.Second) // Polling interval
+		time.Sleep(500 * time.Millisecond) // Polling interval
 	}
 }
 
@@ -527,4 +492,159 @@ func (m *PGLockProvider) Lock(ctx context.Context, lockName string) (eventstore.
 	}
 
 	return unlockFunc, nil
+}
+
+type PostgresAdminDB struct {
+	db     *sql.DB
+	logger logging.Logger
+	schema string
+}
+
+func NewPostgresAdminDB(db *sql.DB, logger logging.Logger, schema string) *PostgresAdminDB {
+	return &PostgresAdminDB{
+		db:     db,
+		logger: logger,
+		schema: schema,
+	}
+}
+
+var userCache = map[string]*admin.User{}
+
+func (s *PostgresAdminDB) ListAdminUsers() ([]*admin.User, error) {
+	rows, err := s.db.Query("SELECT id, username, password_hash, roles FROM users ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []*admin.User
+	for rows.Next() {
+		var user admin.User
+		user, err = s.scanUser(rows)
+		users = append(users, &user)
+	}
+
+	return users, nil
+}
+
+func (s *PostgresAdminDB) GetProjectorLastPosition(projectorName string) (*eventstore.Position, error) {
+	var commitPos, preparePos uint64
+	err := s.db.QueryRow(
+		fmt.Sprintf("SELECT COALESCE(commit_position, 0), COALESCE(prepare_position, 0) FROM %s.projector_checkpoint where name = $1", s.schema),
+		projectorName,
+	).Scan(&commitPos, &preparePos)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	return &eventstore.Position{
+		CommitPosition:  commitPos,
+		PreparePosition: preparePos,
+	}, nil
+}
+
+func (p *PostgresAdminDB) UpdateProjectorPosition(name string, position *eventstore.Position) error {
+	id, err := uuid.NewV7()
+	if err != nil {
+		p.logger.Error("Error generating UUID: %v", err)
+		return err
+	}
+
+	if _, err := p.db.Exec(
+		fmt.Sprintf("INSERT INTO %s.projector_checkpoint (id, name, commit_position, prepare_position) VALUES ($1, $2, $3, $4) ON CONFLICT (name) DO UPDATE SET commit_position = $3, prepare_position = $4", p.schema),
+		id.String(),
+		name,
+		position.CommitPosition,
+		position.PreparePosition,
+	); err != nil {
+		p.logger.Error("Error updating checkpoint: %v", err)
+		return err
+	}
+	return nil
+}
+
+func (p *PostgresAdminDB) CreateNewUser(id string, username string, password_hash string, roles []admin.Role) error {
+	roleStrings := make([]string, len(roles))
+	for i, role := range roles {
+		roleStrings[i] = string(role)
+	}
+	rolesStr := "{" + strings.Join(roleStrings, ",") + "}"
+
+	_, err := p.db.Exec(
+		fmt.Sprintf("INSERT INTO %s.users (id, username, password_hash, roles) VALUES ($1, $2, $3, $4) ON CONFLICT (username) DO UPDATE SET password_hash = $3, roles = $4, updated_at = $5", p.schema),
+		id,
+		username,
+		password_hash,
+		rolesStr,
+		time.Now().Format(time.RFC3339),
+	)
+
+	if err != nil {
+		p.logger.Error("Error creating user: %v", err)
+		return err
+	}
+
+	userCache[username] = &admin.User{
+		Id:             id,
+		Username:       username,
+		HashedPassword: password_hash,
+		Roles:          roles,
+	}
+	return nil
+}
+
+func (p *PostgresAdminDB) DeleteUser(id string) error {
+	_, err := p.db.Exec(
+		fmt.Sprintf("DELETE FROM %s.users WHERE id = $1", p.schema),
+		id,
+	)
+
+	if err != nil {
+		p.logger.Error("Error updating checkpoint: %v", err)
+		return err
+	}
+	return nil
+}
+
+func (s *PostgresAdminDB) scanUser(rows *sql.Rows) (admin.User, error) {
+	var user admin.User
+	var roles []string
+	if err := rows.Scan(&user.Id, &user.Username, &user.HashedPassword, pq.Array(&roles)); err != nil {
+		s.logger.Error("Failed to scan user row: %v", err)
+		return admin.User{}, err
+	}
+
+	for _, role := range roles {
+		user.Roles = append(user.Roles, admin.Role(role))
+	}
+	return user, nil
+}
+
+func (s *PostgresAdminDB) GetUserByUsername(username string) (admin.User, error) {
+	user := userCache[username]
+	if user != nil {
+		s.logger.Debug("Fetched from cache")
+		return *user, nil
+	}
+
+	rows, err := s.db.Query(fmt.Sprintf("SELECT id, username, password_hash, roles FROM %s.users where username = $1", s.schema), username)
+	if err != nil {
+		s.logger.Debugf("Userrrrr: %v", err)
+		return admin.User{}, err
+	}
+	defer rows.Close()
+
+	var userResponse admin.User
+	if rows.Next() {
+		userResponse, err = s.scanUser(rows)
+		if err != nil {
+			return admin.User{}, err
+		}
+	}
+
+	if userResponse.Id != "" {
+		userCache[username] = &userResponse
+		return userResponse, nil
+	}
+	return admin.User{}, fmt.Errorf("user not found")
 }

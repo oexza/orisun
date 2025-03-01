@@ -16,9 +16,6 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-
-	// "google.golang.org/grpc/credentials/insecure"
-
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
@@ -27,7 +24,6 @@ import (
 	pb "orisun/src/orisun/eventstore"
 	"runtime/debug"
 
-	auth "orisun/src/orisun/auth"
 	c "orisun/src/orisun/config"
 	dbase "orisun/src/orisun/db"
 	l "orisun/src/orisun/logging"
@@ -49,10 +45,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize database
-	db := initializeDatabase(config)
-	defer db.Close()
-
 	// Initialize NATS
 	js, nc, ns := initializeNATS(ctx, config)
 	defer nc.Close()
@@ -60,20 +52,35 @@ func main() {
 
 	// time.Sleep(60 * time.Second)
 
+	// Initialize database
+	db, saveEvents, getEvents, lockProvider, adminDB := initializePostgresDatabase(config)
+	defer db.Close()
+
 	// Initialize EventStore
-	eventStore, postgesBoundarySchemaMappings := initializeEventStore(ctx, config, db, js)
+	eventStore := initializeEventStore(
+		ctx,
+		config,
+		saveEvents,
+		getEvents,
+		lockProvider,
+		js,
+	)
 
 	// Start polling events
-	startEventPolling(ctx, config, db, js, postgesBoundarySchemaMappings)
-
-	// Start admin server
-	startAdminServer(config, db, eventStore)
+	startEventPolling(ctx, config, lockProvider, getEvents, js)
 
 	// Start projectors
-	startProjectors(config.Admin.Boundary, config, eventStore, db)
+	startProjectors(ctx, config.Admin.Boundary, config, eventStore, adminDB)
+
+	// Start admin server
+	startAdminServer(
+		config,
+		adminDB,
+		eventStore,
+	)
 
 	// Start gRPC server
-	startGRPCServer(config, eventStore)
+	startGRPCServer(config, eventStore, adminDB)
 }
 
 func initializeConfig() *c.AppConfig {
@@ -92,7 +99,8 @@ func initializeConfig() *c.AppConfig {
 	return config
 }
 
-func initializeDatabase(config *c.AppConfig) *sql.DB {
+func initializePostgresDatabase(config *c.AppConfig) (*sql.DB, *postgres.PostgresSaveEvents,
+	*postgres.PostgresGetEvents, *postgres.PGLockProvider, *postgres.PostgresAdminDB) {
 	db, err := sql.Open(
 		"postgres", fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 			config.Postgres.Host, config.Postgres.Port, config.Postgres.User, config.Postgres.Password, config.Postgres.Name))
@@ -102,14 +110,21 @@ func initializeDatabase(config *c.AppConfig) *sql.DB {
 
 	postgesBoundarySchemaMappings := config.Postgres.GetSchemaMapping()
 	for _, schema := range postgesBoundarySchemaMappings {
-		isAdminSchema := schema.Schema == config.Admin.Schema
-		if err := dbase.RunDbScripts(db, schema.Schema, isAdminSchema, context.Background()); err != nil {
+		isAdminBoundary := schema.Boundary == config.Admin.Boundary
+		if err := dbase.RunDbScripts(db, schema.Schema, isAdminBoundary, context.Background()); err != nil {
 			AppLogger.Fatalf("Failed to run database migrations for schema %s: %v", schema, err)
 		}
 		AppLogger.Info("Database migrations for schema %s completed successfully", schema)
 	}
 
-	return db
+	saveEvents := postgres.NewPostgresSaveEvents(db, &AppLogger, postgesBoundarySchemaMappings)
+	getEvents := postgres.NewPostgresGetEvents(db, &AppLogger, postgesBoundarySchemaMappings)
+	lockProvider := postgres.NewPGLockProvider(db, AppLogger)
+	adminDB := postgres.NewPostgresAdminDB(
+		db, AppLogger, postgesBoundarySchemaMappings[config.Admin.Boundary].Schema,
+	)
+
+	return db, saveEvents, getEvents, lockProvider, adminDB
 }
 
 func initializeNATS(ctx context.Context, config *c.AppConfig) (jetstream.JetStream, *nats.Conn, *server.Server) {
@@ -218,26 +233,36 @@ func waitForJetStream(ctx context.Context, js jetstream.JetStream) {
 	}
 }
 
-func initializeEventStore(ctx context.Context, config *c.AppConfig, db *sql.DB, js jetstream.JetStream) (*pb.EventStore, map[string]c.BoundaryToPostgresSchemaMapping) {
+func initializeEventStore(
+	ctx context.Context,
+	config *c.AppConfig,
+	saveEvents pb.SaveEvents,
+	getEvents pb.GetEvents,
+	lockProvider pb.LockProvider,
+	js jetstream.JetStream) *pb.EventStore {
+
 	AppLogger.Info("Initializing EventStore")
-	postgesBoundarySchemaMappings := config.Postgres.GetSchemaMapping()
 	eventStore := pb.NewEventStoreServer(
 		ctx,
 		js,
-		postgres.NewPostgresSaveEvents(db, &AppLogger, postgesBoundarySchemaMappings),
-		postgres.NewPostgresGetEvents(db, &AppLogger, postgesBoundarySchemaMappings),
-		postgres.NewPGLockProvider(db, AppLogger),
+		saveEvents,
+		getEvents,
+		lockProvider,
 		getBoundaryNames(&config.Boundaries),
 	)
 	AppLogger.Info("EventStore initialized")
 
-	return eventStore, postgesBoundarySchemaMappings
+	return eventStore
 }
 
-func startEventPolling(ctx context.Context, config *c.AppConfig, db *sql.DB, js jetstream.JetStream, postgesBoundarySchemaMappings map[string]c.BoundaryToPostgresSchemaMapping) {
+func startEventPolling(
+	ctx context.Context,
+	config *c.AppConfig,
+	lockProvider pb.LockProvider,
+	getEvents pb.GetEvents,
+	js jetstream.JetStream) {
 	for _, schema := range config.Postgres.GetSchemaMapping() {
-		lockP := postgres.NewPGLockProvider(db, AppLogger)
-		unlock, err := lockP.Lock(ctx, schema.Schema)
+		unlock, err := lockProvider.Lock(ctx, schema.Boundary)
 		if err != nil {
 			AppLogger.Fatalf("Failed to acquire lock: %v", err)
 		}
@@ -251,26 +276,28 @@ func startEventPolling(ctx context.Context, config *c.AppConfig, db *sql.DB, js 
 		}
 		AppLogger.Info("Last published position for schema %v: %v", schema, lastPosition)
 
-		go func(schema c.BoundaryToPostgresSchemaMapping) {
+		go func(boundary c.BoundaryToPostgresSchemaMapping) {
 			defer unlock()
 			postgres.PollEventsFromPgToNats(
 				ctx,
-				db,
 				js,
-				postgres.NewPostgresGetEvents(db, &AppLogger, postgesBoundarySchemaMappings),
+				getEvents,
 				config.PollingPublisher.BatchSize,
 				lastPosition,
 				AppLogger,
-				schema.Boundary,
-				schema.Schema,
+				boundary.Boundary,
 			)
 		}(schema)
 	}
 }
 
-func startAdminServer(config *c.AppConfig, db *sql.DB, eventStore *pb.EventStore) {
+func startAdminServer(config *c.AppConfig, db admin.DB, eventStore *pb.EventStore) {
 	go func() {
-		adminServer, err := admin.NewAdminServer(db, AppLogger, eventStore, config.Admin.Schema, config.Admin.Boundary)
+		adminServer, err := admin.NewAdminServer(
+			AppLogger,
+			eventStore,
+			*admin.NewAdminCommandHandlers(eventStore, db, AppLogger, config.Admin.Boundary),
+		)
 		if err != nil {
 			AppLogger.Fatalf("Could not start admin server %v", err)
 		}
@@ -287,18 +314,14 @@ func startAdminServer(config *c.AppConfig, db *sql.DB, eventStore *pb.EventStore
 	}()
 }
 
-func startGRPCServer(config *c.AppConfig, eventStore pb.EventStoreServer) {
-	authenticator := auth.NewAuthenticator([]auth.User{
-		{
-			Username: config.Auth.AdminUsername,
-			Password: config.Auth.AdminPassword,
-			Roles:    []auth.Role{auth.RoleAdmin},
-		},
-	})
+func startGRPCServer(config *c.AppConfig, eventStore pb.EventStoreServer, adminDB admin.DB) {
+	authenticator := admin.NewAuthenticator(
+		adminDB,
+	)
 
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(auth.UnaryAuthInterceptor(authenticator)),
-		grpc.StreamInterceptor(auth.StreamAuthInterceptor(authenticator)),
+		grpc.UnaryInterceptor(admin.UnaryAuthInterceptor(authenticator)),
+		grpc.StreamInterceptor(admin.StreamAuthInterceptor(authenticator)),
 		grpc.ChainUnaryInterceptor(recoveryInterceptor),
 		grpc.ChainStreamInterceptor(streamErrorInterceptor),
 	)
@@ -320,19 +343,17 @@ func startGRPCServer(config *c.AppConfig, eventStore pb.EventStoreServer) {
 	}
 }
 
-func startProjectors(boundary string, config *c.AppConfig, eventStore *pb.EventStore, db *sql.DB) {
+func startProjectors(ctx context.Context, boundary string, config *c.AppConfig, eventStore *pb.EventStore, db admin.DB) {
 	go func() {
-		AppLogger.Info("Starting user projector")
 		userProjector := admin.NewUserProjector(
 			db,
 			AppLogger,
 			eventStore,
-			config.Admin.Schema,
 			boundary,
 			config.Auth.AdminUsername,
 			config.Auth.AdminPassword,
 		)
-		err := userProjector.Start(context.Background())
+		err := userProjector.Start(ctx)
 
 		if err != nil {
 			AppLogger.Fatalf("Failed to start projection %v", err)

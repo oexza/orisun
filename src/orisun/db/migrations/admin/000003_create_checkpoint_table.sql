@@ -1,6 +1,6 @@
-CREATE TABLE IF NOT EXISTS user_projector_checkpoint (
-    id BOOLEAN PRIMARY KEY DEFAULT TRUE,
+CREATE TABLE IF NOT EXISTS projector_checkpoint (
+    id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) UNIQUE NOT NULL,
     commit_position BIGINT NOT NULL,
-    prepare_position BIGINT NOT NULL,
-    CONSTRAINT single_row CHECK (id)
+    prepare_position BIGINT NOT NULL
 ); 

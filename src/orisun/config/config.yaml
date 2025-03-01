@@ -4,13 +4,15 @@ postgres:
   password: ${ORISUN_PG_PASSWORD:password@1}
   host: ${ORISUN_PG_HOST:localhost}
   port: ${ORISUN_PG_PORT:5432}
-  schemas: ${ORISUN_PG_SCHEMAS:`orisun_test_1:public,orisun_test_2:test2`}
+  schemas: ${ORISUN_PG_SCHEMAS:`orisun_test_1:public,orisun_test_2:test2,orisun_admin:admin`}
 
 boundaries:
   - name: orisun_test_1
     description: boundary1
   - name: orisun_test_2
     description: boundary2
+  - name: orisun_admin
+    description: boundary3
 
 grpc:
   port: ${ORISUN_GRPC_PORT:5005}
@@ -42,5 +44,4 @@ auth:
 # Add to existing config:
 admin:
   port: ${ORISUN_ADMIN_PORT:8991}
-  schema: ${ORISUN_ADMIN_SCHEMA:public}
-  boundary: ${ORISUN_ADMIN_BOUNDARY:orisun_test_2}
+  boundary: ${ORISUN_ADMIN_BOUNDARY:orisun_admin}

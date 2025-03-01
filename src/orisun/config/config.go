@@ -41,7 +41,6 @@ type AppConfig struct {
 	}
 	Admin struct {
 		Port     string
-		Schema   string
 		Boundary string
 	}
 }

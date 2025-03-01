@@ -4,14 +4,11 @@ import (
 	"context"
 )
 
-// CustomEventStream implements the EventStore_CatchUpSubscribeToEventsServer interface
-// for direct usage without going through gRPC server
 type CustomEventStream struct {
 	ctx    context.Context
 	events chan *Event
 }
 
-// NewCustomEventStream creates a new CustomEventStream instance
 func NewCustomEventStream(ctx context.Context) *CustomEventStream {
 	return &CustomEventStream{
 		ctx:    ctx,
@@ -19,7 +16,6 @@ func NewCustomEventStream(ctx context.Context) *CustomEventStream {
 	}
 }
 
-// Send implements the Send method required by EventStore_CatchUpSubscribeToEventsServer
 func (s *CustomEventStream) Send(event *Event) error {
 	select {
 	case <-s.ctx.Done():
@@ -29,7 +25,6 @@ func (s *CustomEventStream) Send(event *Event) error {
 	}
 }
 
-// Context implements the Context method required by EventStore_CatchUpSubscribeToEventsServer
 func (s *CustomEventStream) Context() context.Context {
 	return s.ctx
 }
@@ -39,7 +34,6 @@ func (s *CustomEventStream) Events() <-chan *Event {
 	return s.events
 }
 
-// RecvMsg implements the grpc.ServerStream interface
 func (s *CustomEventStream) Recv() (*Event, error) {
 	select {
 	case <-s.ctx.Done():
@@ -50,9 +44,4 @@ func (s *CustomEventStream) Recv() (*Event, error) {
 		}
 		return event, nil
 	}
-}
-
-// SendMsg implements the grpc.ServerStream interface
-func (s *CustomEventStream) SendMsg(m interface{}) error {
-	return nil
 }
