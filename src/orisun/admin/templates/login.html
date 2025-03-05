@@ -1,0 +1,38 @@
+{{ template "base" . }}
+
+{{ define "title" }}Login - Orisun Admin{{ end }}
+
+{{ define "content" }}
+<div data-signals="{
+        username: '',
+        password: ''
+    }" class="flex items-center justify-center min-h-screen">
+    <div class="w-full max-w-md p-8 space-y-8 bg-white rounded-xl shadow-lg">
+        <div class="text-center">
+            <h2 class="text-3xl font-bold tracking-tight text-gray-900">Orisun Admin</h2>
+            <p class="mt-2 text-sm text-gray-600">Sign in to your account</p>
+        </div>
+
+        <!-- Add message display -->
+        <div data-show="message != ''" class="text-center">
+            <p class="text-sm"><div id="message"></div></p>
+        </div>
+
+        <div class="mt-8 space-y-6">
+            <div class="space-y-4">
+                <md-filled-text-field type="text" name="username" label="Username" required class="w-full"
+                    data-bind-username></md-filled-text-field>
+
+                <md-filled-text-field type="password" name="password" label="Password" required class="w-full"
+                    data-bind-password></md-filled-text-field>
+            </div>
+
+            <div>
+                <md-filled-button type="submit" class="w-full justify-center" data-on-click="@post('/admin/login')">
+                    Sign in
+                </md-filled-button>
+            </div>
+        </div>
+    </div>
+</div>
+{{ end }}

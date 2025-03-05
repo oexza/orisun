@@ -1,7 +1,10 @@
 package admin
 
 import (
+	// "bytes"
+	"encoding/json"
 	"errors"
+	"time"
 
 	// "fmt"
 	"html/template"
@@ -11,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	// datastar "github.com/starfederation/datastar/sdk/go"
+	datastar "github.com/starfederation/datastar/sdk/go"
 )
 
 type contextKey string
@@ -64,13 +67,96 @@ func NewAdminServer(logger l.Logger, eventStore *pb.EventStore, adminCommandHand
 
 	// Register routes
 	router.Route("/admin", func(r chi.Router) {
+		// Add login routes
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			tmpl.ExecuteTemplate(w, "hello-world.html", nil)
+		})
+		r.Get("/login", server.handleLoginPage)
+		r.Post("/login", server.handleLogin)
+
+		// Existing routes
 		r.Get("/users", server.handleUsers)
 		r.Post("/users", server.handleCreateUser)
 		r.Get("/users/list", server.handleUsersList)
 		r.Delete("/users/{username}", server.handleUserDelete)
+
+		r.Get("/hello-world", func(w http.ResponseWriter, r *http.Request) {
+			const message = "A Orisun Datastar!!!"
+
+			type Store struct {
+				Delay time.Duration `json:"delay"` // delay in milliseconds between each character of the message.
+			}
+			store := &Store{}
+			if err := datastar.ReadSignals(r, store); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			sse := datastar.NewSSE(w, r)
+
+			for i := 0; i < len(message); i++ {
+				sse.MergeFragments(`<div id="message">` + message[:i+1] + `</div>`)
+				time.Sleep(store.Delay * time.Millisecond)
+			}
+		})
 	})
 
 	return server, nil
+}
+
+// Add these new handlers
+
+func (s *AdminServer) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+    err := s.tmpl.ExecuteTemplate(w, "login.html", nil)
+    if err != nil {
+        s.logger.Errorf("Template execution error: %v", err)
+        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+        return
+    }
+}
+
+type LoginRequest struct {
+	Username string
+	Password string
+}
+
+func (s *AdminServer) handleLogin(w http.ResponseWriter, r *http.Request) {
+
+	store := &LoginRequest{}
+	if err := datastar.ReadSignals(r, store); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sse := datastar.NewSSE(w, r)
+
+	// Validate credentials
+	user, err := s.adminCommandHandlers.login(store.Username, store.Password)
+	if err != nil {
+		sse.RemoveFragments("message")
+		sse.MergeFragments(`<div id="message">` + `Login Failed` + `</div>`)
+		return
+	}
+
+	userAsString, err := json.Marshal(user)
+	if err != nil {
+		sse.MergeFragments(`<div id="message">` + `Login Failed` + `</div>`)
+	}
+	// Set the token as an HTTP-only cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:  "auth",
+		Value: string(userAsString),
+		// Expires:  ,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Path:     "/",
+	})
+
+	sse.RemoveFragments("message")
+	sse.MergeFragments(`<div id="message">` + `Login Succeded` + `</div>`)
+
+	// Redirect to users page after successful login
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
 
 func (s *AdminServer) handleUsers(w http.ResponseWriter, r *http.Request) {

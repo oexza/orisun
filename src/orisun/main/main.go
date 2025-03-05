@@ -72,15 +72,20 @@ func main() {
 	// Start projectors
 	startProjectors(ctx, config.Admin.Boundary, config, eventStore, adminDB)
 
+	authenticator := admin.NewAuthenticator(
+		adminDB,
+	)
+
 	// Start admin server
 	startAdminServer(
 		config,
 		adminDB,
 		eventStore,
+		*authenticator,
 	)
 
 	// Start gRPC server
-	startGRPCServer(config, eventStore, adminDB)
+	startGRPCServer(config, eventStore, adminDB, authenticator)
 }
 
 func initializeConfig() *c.AppConfig {
@@ -291,12 +296,12 @@ func startEventPolling(
 	}
 }
 
-func startAdminServer(config *c.AppConfig, db admin.DB, eventStore *pb.EventStore) {
+func startAdminServer(config *c.AppConfig, db admin.DB, eventStore *pb.EventStore, authenticator admin.Authenticator) {
 	go func() {
 		adminServer, err := admin.NewAdminServer(
 			AppLogger,
 			eventStore,
-			*admin.NewAdminCommandHandlers(eventStore, db, AppLogger, config.Admin.Boundary),
+			*admin.NewAdminCommandHandlers(eventStore, db, AppLogger, config.Admin.Boundary, &authenticator),
 		)
 		if err != nil {
 			AppLogger.Fatalf("Could not start admin server %v", err)
@@ -314,11 +319,7 @@ func startAdminServer(config *c.AppConfig, db admin.DB, eventStore *pb.EventStor
 	}()
 }
 
-func startGRPCServer(config *c.AppConfig, eventStore pb.EventStoreServer, adminDB admin.DB) {
-	authenticator := admin.NewAuthenticator(
-		adminDB,
-	)
-
+func startGRPCServer(config *c.AppConfig, eventStore pb.EventStoreServer, adminDB admin.DB, authenticator *admin.Authenticator) {
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(admin.UnaryAuthInterceptor(authenticator)),
 		grpc.StreamInterceptor(admin.StreamAuthInterceptor(authenticator)),

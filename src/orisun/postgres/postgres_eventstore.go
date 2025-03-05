@@ -79,7 +79,7 @@ func (s *PostgresSaveEvents) Save(
 		return "", 0, status.Errorf(codes.Internal, "failed to marshal consistency condition: %v", err)
 	}
 	jsonStr := string(streamSubsetAsJsonString)
-	s.logger.Debugf("streamSubsetAsJsonString: %v", jsonStr)
+	// s.logger.Debugf("streamSubsetAsJsonString: %v", jsonStr)
 	streamSubsetQueryJSON = &jsonStr
 
 	var consistencyConditionJSONString *string = nil
@@ -110,7 +110,7 @@ func (s *PostgresSaveEvents) Save(
 		return "", 0, status.Errorf(codes.Internal, "failed to set search path: %v", err)
 	}
 
-	s.logger.Debugf("insertEventsWithConsistency: %s", schema)
+	// s.logger.Debugf("insertEventsWithConsistency: %s", schema)
 	row := tx.QueryRowContext(
 		ctx,
 		fmt.Sprintf(insertEventsWithConsistency, schema),
@@ -138,7 +138,7 @@ func (s *PostgresSaveEvents) Save(
 
 	if err != nil {
 		if strings.Contains(err.Error(), "OptimisticConcurrencyException") {
-			return "", 0, status.Errorf(codes.AlreadyExists, err.Error())
+			return "", 0, status.Error(codes.AlreadyExists, err.Error())
 		}
 		s.logger.Errorf("Error saving events to database: %v", err)
 		return "", 0, status.Errorf(codes.Internal, "Error saving events to database")
@@ -238,8 +238,6 @@ func (s *PostgresGetEvents) Get(ctx context.Context, req *eventstore.GetEventsRe
 		req.Count,
 	)
 	if err != nil {
-		s.logger.Debugf("Naaaax: %v boundary: %v", req.FromPosition, req.Boundary)
-
 		return nil, status.Errorf(codes.Internal, "failed to execute query: %v", err)
 	}
 

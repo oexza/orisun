@@ -11,18 +11,20 @@ import (
 )
 
 type AdminCommandHandlers struct {
-	eventStore *pb.EventStore
-	db         DB
-	logger     l.Logger
-	boundary   string
+	eventStore    *pb.EventStore
+	db            DB
+	logger        l.Logger
+	boundary      string
+	authenticator *Authenticator
 }
 
-func NewAdminCommandHandlers(eventStore *pb.EventStore, db DB, logger l.Logger, boundary string) *AdminCommandHandlers {
+func NewAdminCommandHandlers(eventStore *pb.EventStore, db DB, logger l.Logger, boundary string, authenticator *Authenticator) *AdminCommandHandlers {
 	return &AdminCommandHandlers{
-		eventStore: eventStore,
-		db:         db,
-		logger:     logger,
-		boundary:   boundary,
+		eventStore:    eventStore,
+		db:            db,
+		logger:        logger,
+		boundary:      boundary,
+		authenticator: authenticator,
 	}
 }
 
@@ -268,4 +270,14 @@ func (s *AdminCommandHandlers) deleteUser(userId string) error {
 		})
 	}
 	return fmt.Errorf("error: user not found")
+}
+
+func (s *AdminCommandHandlers) login(username, password string) (User, error) {
+	user, err := s.authenticator.ValidateCredentials(username, password)
+
+	if err != nil {
+		return User{}, err
+	}
+
+	return user, nil
 }
