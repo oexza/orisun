@@ -4,7 +4,7 @@ import (
 	// "bytes"
 	"encoding/json"
 	"errors"
-	"time"
+	
 
 	// "fmt"
 	"html/template"
@@ -79,26 +79,6 @@ func NewAdminServer(logger l.Logger, eventStore *pb.EventStore, adminCommandHand
 		r.Post("/users", server.handleCreateUser)
 		r.Get("/users/list", server.handleUsersList)
 		r.Delete("/users/{username}", server.handleUserDelete)
-
-		r.Get("/hello-world", func(w http.ResponseWriter, r *http.Request) {
-			const message = "A Orisun Datastar!!!"
-
-			type Store struct {
-				Delay time.Duration `json:"delay"` // delay in milliseconds between each character of the message.
-			}
-			store := &Store{}
-			if err := datastar.ReadSignals(r, store); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-
-			sse := datastar.NewSSE(w, r)
-
-			for i := 0; i < len(message); i++ {
-				sse.MergeFragments(`<div id="message">` + message[:i+1] + `</div>`)
-				time.Sleep(store.Delay * time.Millisecond)
-			}
-		})
 	})
 
 	return server, nil

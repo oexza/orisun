@@ -20,17 +20,25 @@
 
         <div class="mt-8 space-y-6">
             <div class="space-y-4">
-                <md-filled-text-field type="text" name="username" label="Username" required class="w-full"
-                    data-bind-username></md-filled-text-field>
+                <sl-input type="text" 
+                    label="Username" 
+                    required 
+                    class="w-full"
+                    data-bind-username>
+                </sl-input>
 
-                <md-filled-text-field type="password" name="password" label="Password" required class="w-full"
-                    data-bind-password></md-filled-text-field>
+                <sl-input type="password" 
+                    label="Password" 
+                    required 
+                    class="w-full"
+                    data-bind-password>
+                </sl-input>
             </div>
 
             <div>
-                <md-filled-button type="submit" class="w-full justify-center" data-on-click="@post('/admin/login')">
+                <sl-button variant="primary" type="submit" class="w-full" data-on-click="@post('/admin/login')">
                     Sign in
-                </md-filled-button>
+                </sl-button>
             </div>
         </div>
     </div>
