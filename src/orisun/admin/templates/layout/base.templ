@@ -1,0 +1,36 @@
+package layout
+
+templ Base(title ...string) {
+    <!DOCTYPE html>
+    <html lang="en">
+        <head>
+            <meta charset="UTF-8"/>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+            <title>{ getTitle(title...) }</title>
+            <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/themes/light.css" />
+            <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/shoelace-autoloader.js"></script>
+            <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.9/bundles/datastar.js"></script>
+            <style>
+                :root {
+                    --sl-color-primary-600: #006A6A;
+                }
+                body {
+                    font-family: var(--sl-font-sans);
+                }
+            </style>
+        </head>
+        <body class="bg-gray-50">
+            <div class="min-h-screen">
+                { children... }
+            </div>
+        </body>
+    </html>
+}
+
+func getTitle(title ...string) string {
+    if len(title) > 0 {
+        return title[0] + " - Orisun Admin"
+    }
+    return "Orisun Admin"
+}

@@ -9,16 +9,16 @@ require (
 	github.com/nats-io/nats-server/v2 v2.10.25
 	github.com/nats-io/nats.go v1.39.0
 	github.com/spf13/viper v1.19.0
+	github.com/starfederation/datastar v0.21.4
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.35.0
 	go.uber.org/zap v1.27.0
 	google.golang.org/grpc v1.69.2
 	google.golang.org/protobuf v1.36.2
-	github.com/starfederation/datastar v0.21.4
 )
 
 require (
-	github.com/a-h/templ v0.2.793 // indirect
+	github.com/a-h/templ v0.3.833
 	github.com/delaneyj/gostar v0.8.0 // indirect
 	github.com/goccy/go-json v0.10.4 // indirect
 	github.com/igrmk/treemap/v2 v2.0.1 // indirect
@@ -84,7 +84,6 @@ require (
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
-	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect

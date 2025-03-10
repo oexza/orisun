@@ -1,4 +1,4 @@
-package postgres_eventstore
+package postgres
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	config "orisun/src/orisun/config"
-	odb "orisun/src/orisun/db"
 	"orisun/src/orisun/eventstore"
 	logging "orisun/src/orisun/logging"
 
@@ -74,7 +73,7 @@ func setupTestDatabase(t *testing.T, container *PostgresContainer) (*sql.DB, err
 	}
 
 	// Run database migrations using the common scripts
-	if err := odb.RunDbScripts(db, "test_boundary", false, context.Background()); err != nil {
+	if err := RunDbScripts(db, "test_boundary", false, context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to run database migrations: %v", err)
 	}
 

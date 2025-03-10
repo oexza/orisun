@@ -1,0 +1,38 @@
+package templates
+
+// import "orisun/src/orisun/admin/templates/layout"
+
+
+templ AddUser(currentPath string) {
+<sl-dialog id="add-user-dialog" label="Create New User" class="dialog-overview" data-signals={`{ username: '' ,
+    password: '' , role: '' }`} data-on-load="document.querySelector('#add-user-dialog').show()">
+    <div>
+        <div class="space-y-4">
+            <sl-input label="Username" required clearable data-bind-username>
+                <sl-icon slot="prefix" name="person"></sl-icon>
+            </sl-input>
+
+            <sl-input type="password" label="Password" required password-toggle data-bind-password>
+                <sl-icon slot="prefix" name="key"></sl-icon>
+            </sl-input>
+
+            <sl-select label="Roles" clearable help-text="Select one or more roles" data-bind-role>
+                <sl-icon slot="prefix" name="shield"></sl-icon>
+                <sl-option value="admin">Admin</sl-option>
+                <sl-option value="user">User</sl-option>
+            </sl-select>
+        </div>
+
+        <div slot="footer" class="flex justify-end gap-2">
+            <sl-button data-on-click="document.querySelector('#add-user-dialog').hide()">
+                <sl-icon slot="prefix" name="x-circle"></sl-icon>
+                Cancel
+            </sl-button>
+            <sl-button variant="primary" data-on-click="@post('/admin/users')">
+                <sl-icon slot="prefix" name="check2-circle"></sl-icon>
+                Create User
+            </sl-button>
+        </div>
+    </div>
+</sl-dialog>
+}

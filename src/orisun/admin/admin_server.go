@@ -4,7 +4,8 @@ import (
 	// "bytes"
 	"encoding/json"
 	"errors"
-	
+	"fmt"
+	// "time"
 
 	// "fmt"
 	"html/template"
@@ -12,6 +13,8 @@ import (
 	pb "orisun/src/orisun/eventstore"
 	l "orisun/src/orisun/logging"
 	"strings"
+
+	"orisun/src/orisun/admin/templates"
 
 	"github.com/go-chi/chi/v5"
 	datastar "github.com/starfederation/datastar/sdk/go"
@@ -50,6 +53,11 @@ func NewAdminServer(logger l.Logger, eventStore *pb.EventStore, adminCommandHand
 
 	tmpl := template.Must(template.New("").Funcs(funcMap).ParseFS(content, "templates/*.html"))
 
+	// Add debug logging
+	for _, t := range tmpl.Templates() {
+		logger.Infof("Loaded template: %s", t.Name())
+	}
+
 	router := chi.NewRouter()
 
 	server := &AdminServer{
@@ -68,31 +76,33 @@ func NewAdminServer(logger l.Logger, eventStore *pb.EventStore, adminCommandHand
 	// Register routes
 	router.Route("/admin", func(r chi.Router) {
 		// Add login routes
-		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			tmpl.ExecuteTemplate(w, "hello-world.html", nil)
-		})
+		r.Get("/dashboard", withAuthentication(server.handleDashboard))
 		r.Get("/login", server.handleLoginPage)
 		r.Post("/login", server.handleLogin)
 
 		// Existing routes
-		r.Get("/users", server.handleUsers)
-		r.Post("/users", server.handleCreateUser)
-		r.Get("/users/list", server.handleUsersList)
-		r.Delete("/users/{username}", server.handleUserDelete)
+		r.Get("/users", withAuthentication(server.handleUsers))
+		r.Post("/users", withAuthentication(server.handleCreateUser))
+		r.Get("/users/add", withAuthentication(server.handleCreateUserPage))
+		// r.Get("/users/list", withAuthentication(server.handleUsersList))
+		r.Delete("/users/{username}", withAuthentication(server.handleUserDelete))
 	})
 
 	return server, nil
 }
 
-// Add these new handlers
+func (s *AdminServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	templates.Dashboard(r.URL.Path).Render(r.Context(), w)
+}
 
 func (s *AdminServer) handleLoginPage(w http.ResponseWriter, r *http.Request) {
-    err := s.tmpl.ExecuteTemplate(w, "login.html", nil)
-    if err != nil {
-        s.logger.Errorf("Template execution error: %v", err)
-        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-        return
-    }
+	err := templates.Login().Render(r.Context(), w)
+
+	if err != nil {
+		s.logger.Errorf("Template execution error: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 }
 
 type LoginRequest struct {
@@ -101,17 +111,16 @@ type LoginRequest struct {
 }
 
 func (s *AdminServer) handleLogin(w http.ResponseWriter, r *http.Request) {
-
 	store := &LoginRequest{}
 	if err := datastar.ReadSignals(r, store); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	sse := datastar.NewSSE(w, r)
 
 	// Validate credentials
 	user, err := s.adminCommandHandlers.login(store.Username, store.Password)
 	if err != nil {
+		sse := datastar.NewSSE(w, r)
 		sse.RemoveFragments("message")
 		sse.MergeFragments(`<div id="message">` + `Login Failed` + `</div>`)
 		return
@@ -119,8 +128,10 @@ func (s *AdminServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	userAsString, err := json.Marshal(user)
 	if err != nil {
+		sse := datastar.NewSSE(w, r)
 		sse.MergeFragments(`<div id="message">` + `Login Failed` + `</div>`)
 	}
+
 	// Set the token as an HTTP-only cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:  "auth",
@@ -132,33 +143,45 @@ func (s *AdminServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 	})
 
-	sse.RemoveFragments("message")
+	sse := datastar.NewSSE(w, r)
+
 	sse.MergeFragments(`<div id="message">` + `Login Succeded` + `</div>`)
 
 	// Redirect to users page after successful login
-	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
+	sse.Redirect("/admin/dashboard")
+}
+
+func (s *AdminServer) handleCreateUserPage(w http.ResponseWriter, r *http.Request) {
+	sse := datastar.NewSSE(w, r)
+	sse.MergeFragmentTempl(templates.AddUser(r.URL.Path), datastar.WithMergeMode(datastar.FragmentMergeModeOuter))
+	// sse.ExecuteScript("document.querySelector('#add-user-dialog').show()")
 }
 
 func (s *AdminServer) handleUsers(w http.ResponseWriter, r *http.Request) {
-	s.tmpl.ExecuteTemplate(w, "users.html", nil)
-}
-
-func (s *AdminServer) handleUsersList(w http.ResponseWriter, r *http.Request) {
 	users, err := s.adminCommandHandlers.listUsers()
 	if err != nil {
+		s.logger.Debugf("Failed to list users: %v", err)
 		http.Error(w, "Failed to list users", http.StatusInternalServerError)
 		return
 	}
 
-	data := struct {
-		Users       []*User
-		CurrentUser string
-	}{
-		Users:       users,
-		CurrentUser: "r.Context().Value(contextKeyUser).(string)",
+	// Convert internal user type to template user type
+	templateUsers := make([]templates.User, len(users))
+	for i, user := range users {
+		// Convert []Role to []string for template compatibility
+		roles := make([]string, len(user.Roles))
+		for j, role := range user.Roles {
+			roles[j] = string(role)
+		}
+
+		templateUsers[i] = templates.User{
+			Username: user.Username,
+			Roles:    roles,
+		}
 	}
 
-	s.tmpl.ExecuteTemplate(w, "user-list.html", data)
+	currentUser := getCurrentUser(r)
+	templates.Users(templateUsers, currentUser, r.URL.Path).Render(r.Context(), w)
 }
 
 func (s *AdminServer) handleCreateUser(w http.ResponseWriter, r *http.Request) {
@@ -215,4 +238,31 @@ func (s *AdminServer) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *AdminServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.router.ServeHTTP(w, r)
+}
+
+func withAuthentication(call func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Check for authentication token
+		c, err := r.Cookie("auth")
+		if err != nil {
+			fmt.Errorf("Template execution error: %v", err)
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		fmt.Errorf("Cookie is : %v", c)
+
+		call(w, r)
+	}
+}
+
+func getCurrentUser(r *http.Request) string {
+	cookie, err := r.Cookie("auth")
+	if err != nil {
+		return ""
+	}
+	var user User
+	if err := json.Unmarshal([]byte(cookie.Value), &user); err != nil {
+		return ""
+	}
+	return user.Username
 }

@@ -109,6 +109,7 @@ func (p *UserProjector) handleEvent(event *eventstore.Event) error {
 			userEvent.PasswordHash,
 			userEvent.Roles,
 		)
+
 		if err != nil {
 			return err
 		}

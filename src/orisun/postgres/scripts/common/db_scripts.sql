@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS btree_gin;
 
 -- Table & Sequence
 CREATE TABLE IF NOT EXISTS orisun_es_event (
-    transaction_id xid8 NOT NULL,
+    transaction_id BIGINT NOT NULL,
     global_id BIGINT PRIMARY KEY,
     stream_name TEXT NOT NULL,
     stream_version BIGINT NOT NULL,
@@ -32,7 +32,7 @@ CREATE OR REPLACE FUNCTION insert_events_with_consistency(
     events JSONB
 ) RETURNS TABLE (
     new_stream_version BIGINT,
-    latest_transaction_id xid8,
+    latest_transaction_id BIGINT,
     latest_global_id BIGINT
 ) LANGUAGE plpgsql AS $$
 DECLARE
@@ -43,9 +43,9 @@ DECLARE
     last_position JSONB := global_condition -> 'last_retrieved_position';
     global_criteria JSONB := global_condition -> 'criteria';
     
-    current_tx_id xid8 := pg_current_xact_id();
+    current_tx_id BIGINT := pg_current_xact_id()::TEXT::BIGINT;
     current_stream_version BIGINT := 0;
-    conflict_transaction xid8;
+    conflict_transaction BIGINT;
     conflict_global_id BIGINT;
     global_keys TEXT[];
     key_record TEXT;
@@ -100,7 +100,7 @@ BEGIN
             INTO conflict_transaction, conflict_global_id
             FROM orisun_es_event e
             WHERE (e.transaction_id, e.global_id) > (
-                (last_position->>'transaction_id')::xid8,
+                (last_position->>'transaction_id')::BIGINT,
                 (last_position->>'global_id')::bigint
             )
             AND e.tags @> ANY (SELECT jsonb_array_elements(global_criteria))
@@ -181,7 +181,7 @@ BEGIN
             (%2$L IS NULL OR stream_version %4$s %2$L) AND
             (%3$L IS NULL OR 
              (transaction_id, global_id) %4$s (
-                %5$L::xid8, 
+                %5$L::BIGINT, 
                 %6$L::BIGINT
              )) AND
             (%7$L::JSONB IS NULL OR tags @> ANY (

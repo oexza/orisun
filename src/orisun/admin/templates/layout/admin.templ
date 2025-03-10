@@ -1,0 +1,44 @@
+package layout
+
+templ Admin(currentPath string, title ...string) {
+@Base(title...) {
+<div class="flex h-screen bg-gray-100">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-white shadow-md">
+        <div class="p-4 border-b">
+            <h2 class="text-xl font-semibold text-gray-800">Orisun Admin</h2>
+        </div>
+
+        <nav class="p-4">
+            <sl-menu class="space-y-2">
+                <sl-menu-item active?={ currentPath == "/admin/dashboard" }>
+                    <a href="/admin/dashboard">
+                        <sl-icon slot="prefix" name="speedometer2"></sl-icon>
+                        Dashboard
+                    </a>
+                </sl-menu-item>
+
+                <sl-menu-item active?={ currentPath == "/admin/users" }>
+                    <a href="/admin/users">
+                        <sl-icon slot="prefix" name="people"></sl-icon>
+                        Users
+                    </a>
+                </sl-menu-item>
+            </sl-menu>
+        </nav>
+
+        <div class="absolute bottom-0 w-64 p-4 border-t bg-white">
+            <sl-button variant="text" size="small" class="w-full" href="/admin/logout">
+                <sl-icon slot="prefix" name="box-arrow-left"></sl-icon>
+                Logout
+            </sl-button>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-auto">
+        { children... }
+    </main>
+</div>
+}
+}

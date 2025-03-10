@@ -1,4 +1,4 @@
-package postgres_eventstore
+package postgres
 
 import (
 	"context"
@@ -27,10 +27,6 @@ import (
 	"github.com/lib/pq"
 )
 
-const (
-	advisoryLockID = 12345
-)
-
 const insertEventsWithConsistency = `
 SELECT * FROM %s.insert_events_with_consistency($1::jsonb, $2::jsonb, $3::jsonb)
 `
@@ -49,7 +45,10 @@ type PostgresSaveEvents struct {
 	boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping
 }
 
-func NewPostgresSaveEvents(db *sql.DB, logger *logging.Logger, boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping) *PostgresSaveEvents {
+func NewPostgresSaveEvents(
+	db *sql.DB,
+	logger *logging.Logger,
+	boundarySchemaMappings map[string]config.BoundaryToPostgresSchemaMapping) *PostgresSaveEvents {
 	return &PostgresSaveEvents{db: db, logger: *logger, boundarySchemaMappings: boundarySchemaMappings}
 }
 
@@ -509,7 +508,7 @@ func NewPostgresAdminDB(db *sql.DB, logger logging.Logger, schema string) *Postg
 var userCache = map[string]*admin.User{}
 
 func (s *PostgresAdminDB) ListAdminUsers() ([]*admin.User, error) {
-	rows, err := s.db.Query("SELECT id, username, password_hash, roles FROM users ORDER BY id")
+	rows, err := s.db.Query(fmt.Sprintf("SELECT id, username, password_hash, roles FROM %s.users ORDER BY id", s.schema))
 	if err != nil {
 		return nil, err
 	}

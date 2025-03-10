@@ -25,7 +25,6 @@ import (
 	"runtime/debug"
 
 	c "orisun/src/orisun/config"
-	dbase "orisun/src/orisun/db"
 	l "orisun/src/orisun/logging"
 	postgres "orisun/src/orisun/postgres"
 
@@ -116,7 +115,7 @@ func initializePostgresDatabase(config *c.AppConfig) (*sql.DB, *postgres.Postgre
 	postgesBoundarySchemaMappings := config.Postgres.GetSchemaMapping()
 	for _, schema := range postgesBoundarySchemaMappings {
 		isAdminBoundary := schema.Boundary == config.Admin.Boundary
-		if err := dbase.RunDbScripts(db, schema.Schema, isAdminBoundary, context.Background()); err != nil {
+		if err := postgres.RunDbScripts(db, schema.Schema, isAdminBoundary, context.Background()); err != nil {
 			AppLogger.Fatalf("Failed to run database migrations for schema %s: %v", schema, err)
 		}
 		AppLogger.Info("Database migrations for schema %s completed successfully", schema)

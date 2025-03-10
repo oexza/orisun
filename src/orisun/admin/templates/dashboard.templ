@@ -1,0 +1,79 @@
+package templates
+
+import "orisun/src/orisun/admin/templates/layout"
+
+templ Dashboard(currentPath string) {
+@layout.Admin(currentPath, "Dashboard - Orisun Admin") {
+<div class="p-6">
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-gray-900">Dashboard</h1>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <sl-card class="shadow-sm">
+            <a href="/admin/users">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-lg font-medium text-gray-900">Total Users</h3>
+                        <p class="text-3xl font-bold mt-2" data-bind-userCount>0</p>
+                    </div>
+                    <sl-icon name="people" style="font-size: 2rem"></sl-icon>
+                </div>
+            </a>
+        </sl-card>
+
+        <sl-card class="shadow-sm">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">Catchup Subscriptions</h3>
+                    <p class="text-3xl font-bold mt-2" data-bind-catchupCount>0</p>
+                </div>
+                <sl-icon name="arrow-repeat" style="font-size: 2rem"></sl-icon>
+            </div>
+        </sl-card>
+
+        <sl-card class="shadow-sm">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">PubSub Subscriptions</h3>
+                    <p class="text-3xl font-bold mt-2" data-bind-pubsubCount>0</p>
+                </div>
+                <sl-icon name="broadcast" style="font-size: 2rem"></sl-icon>
+            </div>
+        </sl-card>
+
+        <sl-card class="shadow-sm">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">Total Events</h3>
+                    <p class="text-3xl font-bold mt-2" data-bind-eventCount>0</p>
+                </div>
+                <sl-icon name="database" style="font-size: 2rem"></sl-icon>
+            </div>
+        </sl-card>
+
+        <sl-card class="shadow-sm">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">Active Streams</h3>
+                    <p class="text-3xl font-bold mt-2" data-bind-streamCount>0</p>
+                </div>
+                <sl-icon name="activity" style="font-size: 2rem"></sl-icon>
+            </div>
+        </sl-card>
+
+        <sl-card class="shadow-sm">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">System Status</h3>
+                    <div class="flex items-center mt-2">
+                        <sl-badge variant="success" data-bind-systemStatus>Healthy</sl-badge>
+                    </div>
+                </div>
+                <sl-icon name="check-circle" style="font-size: 2rem"></sl-icon>
+            </div>
+        </sl-card>
+    </div>
+</div>
+}
+}

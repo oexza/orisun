@@ -1,0 +1,45 @@
+package templates
+
+import "orisun/src/orisun/admin/templates/layout"
+
+templ Login() {
+    @layout.Base("Login") {
+        @LoginContent()
+    }
+}
+
+templ LoginContent() {
+    <div data-signals="{
+                    username: '',
+                    password: ''
+                }" class="flex items-center justify-center min-h-screen">
+        <div class="w-full max-w-md p-8 space-y-8 bg-white rounded-xl shadow-lg">
+            <div class="text-center">
+                <h2 class="text-3xl font-bold tracking-tight text-gray-900">Orisun Admin</h2>
+                <p class="mt-2 text-sm text-gray-600">Sign in to your account</p>
+            </div>
+
+            <div data-show="message != ''" class="text-center">
+                <p class="text-sm">
+                <div id="message"></div>
+                </p>
+            </div>
+
+            <div class="mt-8 space-y-6">
+                <div class="space-y-4">
+                    <sl-input type="text" label="Username" required class="w-full" data-bind-username>
+                    </sl-input>
+
+                    <sl-input type="password" label="Password" required class="w-full" data-bind-password>
+                    </sl-input>
+                </div>
+
+                <div>
+                    <sl-button variant="primary" type="submit" class="w-full" data-on-click="@post('/admin/login')">
+                        Sign in
+                    </sl-button>
+                </div>
+            </div>
+        </div>
+    </div>
+}

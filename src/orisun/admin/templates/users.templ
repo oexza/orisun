@@ -1,0 +1,71 @@
+package templates
+
+import "orisun/src/orisun/admin/templates/layout"
+
+type User struct {
+    Username string
+    Roles []string
+}
+
+templ Users(users []User, currentPath string, currentUser string) {
+    @layout.Admin(currentPath, "Users - Orisun Admin") {
+        <div class="p-6">
+            <div class="mb-6 flex justify-between items-center">
+                <h1 class="text-2xl font-bold text-gray-900">User Management</h1>
+                <sl-button variant="primary" size="medium" data-on-click="@get('/admin/users/add')">
+                    <sl-icon slot="prefix" name="person-plus"></sl-icon>
+                    Add User
+                </sl-button>
+            </div>
+
+            <sl-alert id="message" variant="primary" closable>
+                <sl-icon slot="icon" name="info-circle"></sl-icon>
+                <span class="message-content"></span>
+            </sl-alert>
+
+            <sl-card class="mb-6">
+                <div class="overflow-x-auto">
+                    <table id="users-table" class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Roles</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            @UserList(users, currentUser)
+                        </tbody>
+                    </table>
+                </div>
+            </sl-card>
+            <sl-dialog id="add-user-dialog"></sl-dialog>
+        </div>
+    }
+}
+
+templ UserList(users []User, currentUser string) {
+for _, user := range users {
+<tr>
+    <td>
+        <div class="flex items-center gap-2">
+            <sl-avatar label={user.Username} initials></sl-avatar>
+            <span>{ user.Username }</span>
+        </div>
+    </td>
+    <td>
+        <div class="flex gap-1">
+            for _, role := range user.Roles {
+            <sl-badge variant="neutral">{ role }</sl-badge>
+            }
+        </div>
+    </td>
+    <td style="text-align: right">
+        <sl-button variant="danger" size="small" disabled?={ user.Username==currentUser } data-on-click="@delete('`/admin/users/` + user.Username')">
+            <sl-icon slot="prefix" name="trash"></sl-icon>
+            Delete
+        </sl-button>
+    </td>
+</tr>
+}
+}
